@@ -24,6 +24,19 @@ or maintained by the `llama.cpp` or `ggml-org` projects.
   OpenCode a requirement.
 - Stores settings, jobs, models, runtimes, migrations, and history in SQLite.
 
+## Comparison
+
+This app overlaps with other local-LLM tools, but it aims at a narrower Windows
+workflow: managing `llama.cpp` builds and `llama-server` launches inside
+Ubuntu/WSL without living in a terminal.
+
+| Tool | Primary focus | How llama.cpp Console differs |
+| --- | --- | --- |
+| Ollama | Simple local model runner with CLI, app, model library, and local API. | Keeps you closer to raw `llama.cpp`/GGUF workflows: build CPU/CUDA/Vulkan runtimes in WSL, choose a runtime per model, and inspect logs/metrics directly. |
+| LM Studio | Polished desktop model browser, chat UI, and local OpenAI-compatible server. | Focuses less on chat UX and more on WSL setup, source builds, runtime selection, launch profiles, and operational monitoring. |
+| Jan | Open-source local AI platform with desktop, server/API, CLI, and assistant workflows. | Stays centered on Windows-managed `llama.cpp` in Ubuntu/WSL, plus optional OpenCode config helpers, instead of being a general assistant platform. |
+| `llama-server` | Upstream `llama.cpp` OpenAI-compatible HTTP server. | Wraps `llama-server` with Windows UI for WSL/toolchain setup, source checkout/builds, model registration, per-model launch settings, logs, metrics, and update/install flow. |
+
 ## Safety Defaults
 
 - The app control service binds to `127.0.0.1` only and requires a per-session
