@@ -6,6 +6,8 @@ Windows-first desktop app for installing, configuring, and running local
 This is an unofficial community project. It is not affiliated with, endorsed by,
 or maintained by the `llama.cpp` or `ggml-org` projects.
 
+![llama.cpp Console overview showing a loaded model, live token counters, GPU status, runtime logs, and llama.cpp metrics](docs/images/overview.png)
+
 ## Status
 
 The current target is a v1.0 Windows beta:
