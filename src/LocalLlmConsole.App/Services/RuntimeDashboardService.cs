@@ -82,6 +82,13 @@ public static class RuntimeDashboardService
         return Math.Max(0, (long)Math.Floor(current.Value - previous.Value));
     }
 
+    public static long WholePositiveDeltaAndRemember(double? current, ref double? previous)
+    {
+        var delta = WholePositiveDelta(current, previous);
+        if (current is not null) previous = current;
+        return delta;
+    }
+
     public static bool PositiveDelta(double? current, double? previous)
         => current is not null && previous is not null && current.Value > previous.Value;
 

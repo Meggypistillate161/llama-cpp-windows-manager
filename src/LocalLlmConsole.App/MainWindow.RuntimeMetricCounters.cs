@@ -67,10 +67,8 @@ public partial class MainWindow
             return;
         }
 
-        var generatedDelta = RuntimeDashboardService.WholePositiveDelta(generatedCounter, _lastLifetimeGeneratedCounter);
-        var promptDelta = RuntimeDashboardService.WholePositiveDelta(promptCounter, _lastLifetimePromptCounter);
-        _lastLifetimeGeneratedCounter = generatedCounter;
-        _lastLifetimePromptCounter = promptCounter;
+        var generatedDelta = RuntimeDashboardService.WholePositiveDeltaAndRemember(generatedCounter, ref _lastLifetimeGeneratedCounter);
+        var promptDelta = RuntimeDashboardService.WholePositiveDeltaAndRemember(promptCounter, ref _lastLifetimePromptCounter);
 
         if (generatedDelta <= 0 && promptDelta <= 0) return;
 

@@ -370,6 +370,13 @@ public sealed partial class ReleaseHardeningTests
         Assert.Null(RuntimeDashboardService.DeltaRate(10, 10, 2, includeZero: false));
         Assert.Equal(0, RuntimeDashboardService.DeltaRate(10, 10, 2, includeZero: true));
         Assert.Equal(4, RuntimeDashboardService.WholePositiveDelta(7.9, 3.1));
+        double? lifetimeCounter = 10;
+        Assert.Equal(0, RuntimeDashboardService.WholePositiveDeltaAndRemember(null, ref lifetimeCounter));
+        Assert.Equal(10, lifetimeCounter);
+        Assert.Equal(5, RuntimeDashboardService.WholePositiveDeltaAndRemember(15.9, ref lifetimeCounter));
+        Assert.Equal(15.9, lifetimeCounter);
+        Assert.Equal(0, RuntimeDashboardService.WholePositiveDeltaAndRemember(2, ref lifetimeCounter));
+        Assert.Equal(2, lifetimeCounter);
         Assert.True(RuntimeDashboardService.PositiveDelta(4, 3));
         Assert.Equal("Gen 13\nPrompt 15", RuntimeDashboardService.TokenSummaryLabel(13, 15));
         Assert.Equal("2.0 t/s (3.0 avg)", RuntimeDashboardService.RateLabel(2, 3));
