@@ -19,6 +19,26 @@ These are codebase quality items that can continue locally without external inpu
 - Add integration-style `LlamaProcessSupervisor` tests around real process shutdown, stderr/stdout logging, and WSL kill fallback when a suitable test harness is available.
 - Add more Hugging Face launch-suggestion behavior tests only when new option mappings are introduced.
 
+## Bug-Hardening Follow-Ups
+
+These came from the May 26 external bug report triage. The scary Hugging Face
+download timeout and range-resume corruption claims were reviewed against the
+current code and are not being tracked as release blockers.
+
+- Make `LocalAppService` resilient to unexpected `HttpListener.GetContextAsync`
+  failures by logging non-shutdown listener errors and either continuing safely
+  or surfacing a clear app-service failure.
+- Add a bounded or TTL-based cache for Hugging Face repository metadata so
+  `_repoInfoCache` cannot grow indefinitely across many unique searches.
+- Revisit legacy settings migration so exact old default values are migrated
+  only when they are truly legacy values, not when a user intentionally saved
+  the same value.
+- Strengthen native `llama-server` shutdown after `Kill(entireProcessTree)` with
+  a follow-up verification/cleanup path, similar in spirit to the WSL marker
+  cleanup.
+- Consider central job status transition validation in `JobEngine` once the
+  download and runtime-build callers have a documented transition map.
+
 ## Product/Workflow Work Still Open
 
 These are broader product items already implied by the release docs:
