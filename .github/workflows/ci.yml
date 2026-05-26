@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test-publish:
+    name: Build, test, and publish
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore and build
+        shell: pwsh
+        run: .\build-app.ps1 -Restore
+
+      - name: Test
+        shell: pwsh
+        run: .\test-app.ps1
+
+      - name: Package vulnerability audit
+        shell: pwsh
+        run: .\test-vulnerabilities.ps1
+
+      - name: Publish smoke
+        shell: pwsh
+        run: .\publish-app.ps1
+
+      - name: Verify publish contents
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "Published executable was not produced: $exe" }
+          if (-not (Test-Path -LiteralPath "$exe.sha256")) { throw "Published executable checksum was not produced: $exe.sha256" }
+          $pdbs = Get-ChildItem -Path (Split-Path -Parent $exe) -Recurse -Filter *.pdb -File -ErrorAction SilentlyContinue
+          if ($pdbs) { throw "Release publish contains PDB files." }

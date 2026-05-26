@@ -1,0 +1,149 @@
+param(
+  [ValidateSet("win-x64")]
+  [string] $Runtime = "win-x64",
+  [string] $Configuration = "Release",
+  [string] $InnoSetupPath = "",
+  [string] $CertificateThumbprint = "",
+  [string] $TimestampServer = "http://timestamp.digicert.com",
+  [switch] $RequireSigned,
+  [switch] $SkipPublish
+)
+
+$ErrorActionPreference = "Stop"
+
+function Resolve-InnoSetupCompiler([string] $ConfiguredPath) {
+  $candidates = @()
+  if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
+    $candidates += $ConfiguredPath
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:LLAMA_CPP_CONSOLE_INNO_SETUP)) {
+    $candidates += $env:LLAMA_CPP_CONSOLE_INNO_SETUP
+  }
+
+  $pathCommand = Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue
+  if ($pathCommand) {
+    $candidates += $pathCommand.Source
+  }
+
+  $programFilesX86 = ${env:ProgramFiles(x86)}
+  if ($programFilesX86) {
+    $candidates += (Join-Path $programFilesX86 "Inno Setup 6\ISCC.exe")
+  }
+  if ($env:ProgramFiles) {
+    $candidates += (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+  }
+  if ($env:LOCALAPPDATA) {
+    $candidates += (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+  }
+
+  foreach ($candidate in $candidates) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate)) {
+      return (Get-Item -LiteralPath $candidate).FullName
+    }
+  }
+
+  throw "Inno Setup 6 compiler was not found. Install Inno Setup 6 or pass -InnoSetupPath / set LLAMA_CPP_CONSOLE_INNO_SETUP to ISCC.exe."
+}
+
+function Read-ProjectVersion([string] $ProjectPath) {
+  [xml] $project = Get-Content -LiteralPath $ProjectPath
+  $version = @($project.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ }) | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "Project version was not found in $ProjectPath"
+  }
+  return $version
+}
+
+function Sign-FileIfRequested([string] $PathToSign, [string] $Thumbprint, [string] $Timestamp, [bool] $RequireValidSignature) {
+  if ($Thumbprint) {
+    $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+      Where-Object { $_.Thumbprint -replace '\s', '' -ieq ($Thumbprint -replace '\s', '') } |
+      Select-Object -First 1
+    if (-not $cert) {
+      throw "Code-signing certificate was not found in CurrentUser or LocalMachine certificate stores: $Thumbprint"
+    }
+
+    $signature = Set-AuthenticodeSignature -FilePath $PathToSign -Certificate $cert -TimestampServer $Timestamp
+    if ($signature.Status -ne "Valid") {
+      throw "Code signing failed for $PathToSign`: $($signature.Status) $($signature.StatusMessage)"
+    }
+  }
+
+  $publishedSignature = Get-AuthenticodeSignature -FilePath $PathToSign
+  if ($RequireValidSignature -and $publishedSignature.Status -ne "Valid") {
+    throw "Installer artifact is not signed: $PathToSign"
+  }
+  if ($publishedSignature.Status -ne "Valid") {
+    Write-Warning "Installer artifact is not signed. Use -CertificateThumbprint and -RequireSigned for public release builds."
+  }
+}
+
+$AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
+$PublishScript = Join-Path $AppDir "publish-app.ps1"
+$InstallerScript = Join-Path $AppDir "installer\LlamaCppConsole.iss"
+$DistRoot = [System.IO.Path]::GetFullPath((Join-Path $AppDir "dist"))
+$PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppConsole-$Runtime"))
+$OutputDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "installer"))
+$PublishedExe = Join-Path $PublishDir "LlamaCppConsole.exe"
+$AppVersion = Read-ProjectVersion $Project
+$ExpectedInstaller = Join-Path $OutputDir "LlamaCppConsole-Setup-$AppVersion-$Runtime.exe"
+
+if (-not (Test-Path -LiteralPath $InstallerScript)) {
+  throw "Installer script not found: $InstallerScript"
+}
+if (-not ($OutputDir.StartsWith($DistRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase))) {
+  throw "Refusing to write installer outside the dist folder: $OutputDir"
+}
+
+if (-not $SkipPublish) {
+  $publishArgs = @{
+    Runtime = $Runtime
+    Configuration = $Configuration
+  }
+  if ($CertificateThumbprint) {
+    $publishArgs.CertificateThumbprint = $CertificateThumbprint
+    $publishArgs.TimestampServer = $TimestampServer
+  }
+  if ($RequireSigned) {
+    $publishArgs.RequireSigned = $true
+  }
+
+  & $PublishScript @publishArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "publish-app.ps1 failed."
+  }
+}
+
+if (-not (Test-Path -LiteralPath $PublishedExe)) {
+  throw "Published executable not found. Run publish-app.ps1 first or omit -SkipPublish: $PublishedExe"
+}
+
+New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+if (Test-Path -LiteralPath $ExpectedInstaller) {
+  Remove-Item -LiteralPath $ExpectedInstaller -Force
+}
+
+$Iscc = Resolve-InnoSetupCompiler $InnoSetupPath
+$isccArgs = @(
+  "/DSourceDir=$PublishDir",
+  "/DOutputDir=$OutputDir",
+  "/DAppVersion=$AppVersion",
+  $InstallerScript
+)
+& $Iscc @isccArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "Inno Setup compiler failed."
+}
+if (-not (Test-Path -LiteralPath $ExpectedInstaller)) {
+  throw "Expected installer was not created: $ExpectedInstaller"
+}
+
+Sign-FileIfRequested $ExpectedInstaller $CertificateThumbprint $TimestampServer $RequireSigned.IsPresent
+
+$InstallerHash = (Get-FileHash -LiteralPath $ExpectedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+$InstallerHashPath = "$ExpectedInstaller.sha256"
+Set-Content -LiteralPath $InstallerHashPath -Value "$InstallerHash  $(Split-Path -Leaf $ExpectedInstaller)" -Encoding ascii
+
+Write-Host "Built llama.cpp Console installer at $ExpectedInstaller" -ForegroundColor Green
+Write-Host "Wrote SHA-256 companion file to $InstallerHashPath" -ForegroundColor Green

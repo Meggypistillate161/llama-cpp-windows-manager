@@ -1,0 +1,59 @@
+# Local runtime state
+/logs/
+/data/
+/models/
+/runtimes/
+/cache/
+/state/
+bin/
+obj/
+/dist/
+/workspace/
+*.log
+*.tmp
+*.part
+*.partial
+*.download
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local secrets and machine-specific config
+.env
+.env.*
+*.local.json
+appsettings.Development.json
+
+# Downloaded model/checkpoint artifacts
+*.gguf
+*.ggml
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+
+# Windows / editor noise
+Thumbs.db
+Desktop.ini
+.vs/
+.vscode/
+*.user
+*.suo
+TestResults/
+
+# Build artifacts
+*.exe
+*.dll
+*.pdb
+*.obj
+*.deps.json
+*.runtimeconfig.json
+*.nupkg
+*.zip
+*.msix
+*.msi

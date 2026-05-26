@@ -1,0 +1,272 @@
+namespace LocalLlmConsole.Services;
+
+public sealed partial class StateStore
+{
+    public async Task<AppSettings> GetAppSettingsAsync(string workspaceRoot)
+    {
+        var defaults = AppSettings.CreateDefault(workspaceRoot);
+        var values = await ListSettingsAsync();
+        var corrupt = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        string StringValue(string key, string fallback)
+        {
+            if (!values.TryGetValue(key, out var value)) return fallback;
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<string>(value);
+                return string.IsNullOrWhiteSpace(parsed) ? fallback : parsed;
+            }
+            catch
+            {
+                corrupt[key] = value;
+                return fallback;
+            }
+        }
+
+        int IntValue(string key, int fallback)
+        {
+            if (!values.TryGetValue(key, out var value)) return fallback;
+            if (TryReadJsonNumber(value, out var number))
+            {
+                if (number is >= int.MinValue and <= int.MaxValue) return (int)number;
+            }
+            corrupt[key] = value;
+            return fallback;
+        }
+
+        double DoubleValue(string key, double fallback)
+        {
+            if (!values.TryGetValue(key, out var value)) return fallback;
+            if (TryReadJsonDouble(value, out var number)) return number;
+            corrupt[key] = value;
+            return fallback;
+        }
+
+        bool BoolValue(string key, bool fallback)
+        {
+            if (!values.TryGetValue(key, out var value)) return fallback;
+            if (TryReadJsonBool(value, out var parsed)) return parsed;
+            corrupt[key] = value;
+            return fallback;
+        }
+
+        var settings = defaults with
+        {
+            WorkspaceRoot = StringValue("workspaceRoot", defaults.WorkspaceRoot),
+            ModelsRoot = StringValue("modelsRoot", defaults.ModelsRoot),
+            RuntimeRoot = StringValue("runtimeRoot", defaults.RuntimeRoot),
+            CacheRoot = StringValue("cacheRoot", defaults.CacheRoot),
+            ThemeMode = StringValue("themeMode", defaults.ThemeMode),
+            MinimizeBehavior = StringValue("minimizeBehavior", defaults.MinimizeBehavior),
+            ModelAccessMode = NormalizeModelAccessMode(StringValue("modelAccessMode", defaults.ModelAccessMode)),
+            Host = StringValue("host", defaults.Host),
+            ModelApiKey = SecretProtector.UnprotectSetting(StringValue("modelApiKey", defaults.ModelApiKey)),
+            WslDistro = StringValue("wslDistro", defaults.WslDistro),
+            Port = IntValue("port", defaults.Port),
+            ContextSize = IntValue("contextSize", defaults.ContextSize),
+            GpuLayers = IntValue("gpuLayers", defaults.GpuLayers),
+            EnableMetrics = BoolValue("enableMetrics", defaults.EnableMetrics),
+            MaxLogFileSizeMb = Math.Clamp(IntValue("maxLogFileSizeMb", defaults.MaxLogFileSizeMb), 1, 4096),
+            AutoUnloadIdleMinutes = Math.Clamp(IntValue("autoUnloadIdleMinutes", defaults.AutoUnloadIdleMinutes), 0, 10080),
+            DeleteRuntimeSourceAfterSuccessfulBuild = BoolValue("deleteRuntimeSourceAfterSuccessfulBuild", defaults.DeleteRuntimeSourceAfterSuccessfulBuild),
+            ReasoningMode = StringValue("reasoningMode", defaults.ReasoningMode),
+            ReasoningFormat = StringValue("reasoningFormat", defaults.ReasoningFormat),
+            ReasoningBudget = IntValue("reasoningBudget", defaults.ReasoningBudget),
+            VisionMode = StringValue("visionMode", defaults.VisionMode),
+            VisionImageMinTokens = IntValue("visionImageMinTokens", defaults.VisionImageMinTokens),
+            VisionImageMaxTokens = IntValue("visionImageMaxTokens", defaults.VisionImageMaxTokens),
+            FlashAttention = StringValue("flashAttention", defaults.FlashAttention),
+            CacheTypeK = StringValue("cacheTypeK", defaults.CacheTypeK),
+            CacheTypeV = StringValue("cacheTypeV", defaults.CacheTypeV),
+            KvOffload = StringValue("kvOffload", defaults.KvOffload),
+            KvUnified = StringValue("kvUnified", defaults.KvUnified),
+            ContinuousBatching = StringValue("continuousBatching", defaults.ContinuousBatching),
+            JinjaMode = StringValue("jinjaMode", defaults.JinjaMode),
+            ParallelSlots = IntValue("parallelSlots", defaults.ParallelSlots),
+            BatchSize = IntValue("batchSize", defaults.BatchSize),
+            MicroBatchSize = IntValue("microBatchSize", defaults.MicroBatchSize),
+            Threads = IntValue("threads", defaults.Threads),
+            MmapMode = StringValue("mmapMode", defaults.MmapMode),
+            MlockMode = StringValue("mlockMode", defaults.MlockMode),
+            Temperature = DoubleValue("temperature", defaults.Temperature),
+            TopK = IntValue("topK", defaults.TopK),
+            TopP = DoubleValue("topP", defaults.TopP),
+            MinP = DoubleValue("minP", defaults.MinP),
+            MaxTokens = IntValue("maxTokens", defaults.MaxTokens),
+            Seed = IntValue("seed", defaults.Seed),
+            RepeatLastN = IntValue("repeatLastN", defaults.RepeatLastN),
+            RepeatPenalty = DoubleValue("repeatPenalty", defaults.RepeatPenalty),
+            PresencePenalty = DoubleValue("presencePenalty", defaults.PresencePenalty),
+            FrequencyPenalty = DoubleValue("frequencyPenalty", defaults.FrequencyPenalty),
+            RopeScaling = StringValue("ropeScaling", defaults.RopeScaling),
+            RopeScale = DoubleValue("ropeScale", defaults.RopeScale),
+            RopeFreqBase = DoubleValue("ropeFreqBase", defaults.RopeFreqBase),
+            RopeFreqScale = DoubleValue("ropeFreqScale", defaults.RopeFreqScale),
+            SpeculativeType = StringValue("speculativeType", defaults.SpeculativeType),
+            SpecDraftModelPath = StringValue("specDraftModelPath", defaults.SpecDraftModelPath),
+            SpecDraftGpuLayers = IntValue("specDraftGpuLayers", defaults.SpecDraftGpuLayers),
+            SpecDraftMinTokens = IntValue("specDraftMinTokens", defaults.SpecDraftMinTokens),
+            SpecDraftMaxTokens = IntValue("specDraftMaxTokens", defaults.SpecDraftMaxTokens),
+            SpecDraftPSplit = DoubleValue("specDraftPSplit", defaults.SpecDraftPSplit),
+            SpecDraftPMin = DoubleValue("specDraftPMin", defaults.SpecDraftPMin),
+            SpecDraftCacheTypeK = StringValue("specDraftCacheTypeK", defaults.SpecDraftCacheTypeK),
+            SpecDraftCacheTypeV = StringValue("specDraftCacheTypeV", defaults.SpecDraftCacheTypeV)
+        };
+
+        var migratedLegacyLaunchDefaults = false;
+        if (IsStoredIntValue(values, "contextSize", 0))
+        {
+            settings = settings with { ContextSize = AppSettings.DefaultContextSize };
+            migratedLegacyLaunchDefaults = true;
+        }
+        if (IsStoredIntValue(values, "gpuLayers", 0))
+        {
+            settings = settings with { GpuLayers = AppSettings.DefaultGpuLayers };
+            migratedLegacyLaunchDefaults = true;
+        }
+        if (IsStoredIntValue(values, "batchSize", 2048))
+        {
+            settings = settings with { BatchSize = AppSettings.DefaultBatchSize };
+            migratedLegacyLaunchDefaults = true;
+        }
+        if (IsStoredStringValue(values, "cacheTypeK", "f16"))
+        {
+            settings = settings with { CacheTypeK = AppSettings.DefaultCacheType };
+            migratedLegacyLaunchDefaults = true;
+        }
+        if (IsStoredStringValue(values, "cacheTypeV", "f16"))
+        {
+            settings = settings with { CacheTypeV = AppSettings.DefaultCacheType };
+            migratedLegacyLaunchDefaults = true;
+        }
+        if (IsStoredDoubleValue(values, "temperature", 0.8))
+        {
+            settings = settings with { Temperature = AppSettings.DefaultTemperature };
+            migratedLegacyLaunchDefaults = true;
+        }
+
+        if (corrupt.Count > 0)
+        {
+            await BackupCorruptSettingsAsync(corrupt);
+        }
+        if (corrupt.Count > 0 || migratedLegacyLaunchDefaults)
+        {
+            await SaveAppSettingsAsync(settings);
+        }
+
+        return settings;
+    }
+
+    public async Task SaveAppSettingsAsync(AppSettings settings)
+    {
+        var rows = new (string Key, object Value)[]
+        {
+            ("workspaceRoot", settings.WorkspaceRoot),
+            ("modelsRoot", settings.ModelsRoot),
+            ("runtimeRoot", settings.RuntimeRoot),
+            ("cacheRoot", settings.CacheRoot),
+            ("themeMode", settings.ThemeMode),
+            ("minimizeBehavior", settings.MinimizeBehavior),
+            ("modelAccessMode", NormalizeModelAccessMode(settings.ModelAccessMode)),
+            ("host", settings.Host),
+            ("modelApiKey", SecretProtector.ProtectSetting(settings.ModelApiKey)),
+            ("wslDistro", settings.WslDistro),
+            ("port", settings.Port),
+            ("contextSize", settings.ContextSize),
+            ("gpuLayers", settings.GpuLayers),
+            ("enableMetrics", settings.EnableMetrics),
+            ("maxLogFileSizeMb", settings.MaxLogFileSizeMb),
+            ("autoUnloadIdleMinutes", settings.AutoUnloadIdleMinutes),
+            ("deleteRuntimeSourceAfterSuccessfulBuild", settings.DeleteRuntimeSourceAfterSuccessfulBuild),
+            ("reasoningMode", settings.ReasoningMode),
+            ("reasoningFormat", settings.ReasoningFormat),
+            ("reasoningBudget", settings.ReasoningBudget),
+            ("visionMode", settings.VisionMode),
+            ("visionImageMinTokens", settings.VisionImageMinTokens),
+            ("visionImageMaxTokens", settings.VisionImageMaxTokens),
+            ("flashAttention", settings.FlashAttention),
+            ("cacheTypeK", settings.CacheTypeK),
+            ("cacheTypeV", settings.CacheTypeV),
+            ("kvOffload", settings.KvOffload),
+            ("kvUnified", settings.KvUnified),
+            ("continuousBatching", settings.ContinuousBatching),
+            ("jinjaMode", settings.JinjaMode),
+            ("parallelSlots", settings.ParallelSlots),
+            ("batchSize", settings.BatchSize),
+            ("microBatchSize", settings.MicroBatchSize),
+            ("threads", settings.Threads),
+            ("mmapMode", settings.MmapMode),
+            ("mlockMode", settings.MlockMode),
+            ("temperature", settings.Temperature),
+            ("topK", settings.TopK),
+            ("topP", settings.TopP),
+            ("minP", settings.MinP),
+            ("maxTokens", settings.MaxTokens),
+            ("seed", settings.Seed),
+            ("repeatLastN", settings.RepeatLastN),
+            ("repeatPenalty", settings.RepeatPenalty),
+            ("presencePenalty", settings.PresencePenalty),
+            ("frequencyPenalty", settings.FrequencyPenalty),
+            ("ropeScaling", settings.RopeScaling),
+            ("ropeScale", settings.RopeScale),
+            ("ropeFreqBase", settings.RopeFreqBase),
+            ("ropeFreqScale", settings.RopeFreqScale),
+            ("speculativeType", settings.SpeculativeType),
+            ("specDraftModelPath", settings.SpecDraftModelPath),
+            ("specDraftGpuLayers", settings.SpecDraftGpuLayers),
+            ("specDraftMinTokens", settings.SpecDraftMinTokens),
+            ("specDraftMaxTokens", settings.SpecDraftMaxTokens),
+            ("specDraftPSplit", settings.SpecDraftPSplit),
+            ("specDraftPMin", settings.SpecDraftPMin),
+            ("specDraftCacheTypeK", settings.SpecDraftCacheTypeK),
+            ("specDraftCacheTypeV", settings.SpecDraftCacheTypeV)
+        };
+
+        await WithConnectionAsync(async () =>
+        {
+            await using var transaction = await _connection.BeginTransactionAsync();
+            foreach (var row in rows)
+                await SetSettingUnlockedAsync(row.Key, row.Value, transaction);
+
+            await transaction.CommitAsync();
+        });
+    }
+
+    public async Task<Dictionary<string, string>> ListSettingsAsync()
+    {
+        return await WithConnectionAsync(async () =>
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            await using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT key, value_json FROM settings;";
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) values[reader.GetString(0)] = reader.GetString(1);
+            return values;
+        });
+    }
+
+    private static string NormalizeModelAccessMode(string text)
+    {
+        var value = (text ?? "").Trim()
+            .Replace("-", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("_", "", StringComparison.OrdinalIgnoreCase)
+            .Replace(" ", "", StringComparison.OrdinalIgnoreCase)
+            .ToLowerInvariant();
+        return value is "lan" or "lanaccess" or "network" or "networkaccess" ? "lan" : "local";
+    }
+
+    private async Task SetSettingUnlockedAsync(string key, object value, System.Data.Common.DbTransaction? transaction = null)
+    {
+        await using var command = _connection.CreateCommand();
+        command.Transaction = (SqliteTransaction?)transaction;
+        command.CommandText = """
+INSERT INTO settings (key, value_json, updated_at)
+VALUES ($key, $value_json, $updated_at)
+ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at;
+""";
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$value_json", JsonSerializer.Serialize(value, value.GetType()));
+        command.Parameters.AddWithValue("$updated_at", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync();
+    }
+}
