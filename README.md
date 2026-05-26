@@ -8,20 +8,6 @@ or maintained by the `llama.cpp` or `ggml-org` projects.
 
 ![llama.cpp Console overview showing a loaded model, live token counters, GPU status, runtime logs, and llama.cpp metrics](docs/images/overview.png)
 
-## Status
-
-The current target is a v1.0 Windows beta:
-
-- .NET 8 WPF desktop app, published as a self-contained `win-x64` executable.
-- Ubuntu/WSL runtime path for `llama-server` builds and launches.
-- No web dashboard and no visible command-prompt servers in normal use.
-- Local-only model serving by default, with explicit opt-in for LAN access.
-- Public release artifacts must be signed and shipped with `.sha256` companions.
-
-Clean-machine VM validation and trusted code signing are still required before a
-production public release. See [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md)
-and [docs/SIGNING.md](docs/SIGNING.md).
-
 ## What It Does
 
 - Registers local GGUF models and app-managed downloaded models.
@@ -128,7 +114,7 @@ CI runs the same gate on `windows-latest` through
 [.github/workflows/ci.yml](.github/workflows/ci.yml). `global.json` pins the SDK
 feature band used by CI and local scripts.
 
-Public release builds must be signed:
+Signed release builds can be produced with a certificate thumbprint:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1 -CertificateThumbprint "<cert-thumbprint>" -RequireSigned
@@ -136,8 +122,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 ```
 
 The publish and installer scripts write `.sha256` companion files beside the
-generated binaries after signing. The app updater requires a matching SHA-256
-asset before staging an update.
+generated binaries. The app updater requires a matching SHA-256 asset before
+staging an update.
 
 Launch a published local build:
 
@@ -179,9 +165,6 @@ executable are `llama.cpp Console` and `LlamaCppConsole.exe`.
 
 ## Known Limitations
 
-- Clean Windows VM validation is still required before a public release.
-- A trusted code-signing certificate or accepted OSS signing workflow is still
-  required for public artifacts.
 - Installer builds require Inno Setup 6 locally or
   `LLAMA_CPP_CONSOLE_INNO_SETUP`.
 - WSL hardware coverage still needs validation across missing WSL, CPU-only,
