@@ -1,7 +1,7 @@
 # Signing Windows Releases
 
 Trusted Windows releases should be Authenticode-signed and timestamped before
-upload. The current v1.1.0 community release is unsigned and should be described
+upload. The current v1.1.2 community release is unsigned and should be described
 as unsigned wherever it is linked. The release scripts support signing with a
 certificate already available in the Windows certificate store:
 
@@ -27,7 +27,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 
 Do not describe a release as signed, trusted, or production-hardened unless:
 
-1. `LlamaCppConsole.exe` is signed.
-2. `LlamaCppConsole-Setup-<version>-win-x64.exe` is signed.
-3. Each uploaded binary has a matching `.sha256` companion asset generated after
+1. `LlamaCppWindowsManager.exe` is signed.
+2. `LlamaCppWindowsManager-Setup-<version>-win-x64.exe` is signed.
+3. `LlamaCppWindowsManager-win-x64.zip` is generated from signed contents.
+4. Each uploaded binary/archive has a matching `.sha256` companion asset generated after
    signing.

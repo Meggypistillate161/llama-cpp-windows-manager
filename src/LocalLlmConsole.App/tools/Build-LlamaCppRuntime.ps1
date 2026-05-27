@@ -304,7 +304,7 @@ if ($Runtime -eq "wsl") {
   $SourceQ = Quote-Bash $WslSource
   $BuildQ = Quote-Bash $WslBuild
   $InstallQ = Quote-Bash $WslInstall
-  $MarkerExport = if ([string]::IsNullOrWhiteSpace($ProcessMarker)) { ":" } else { "export LLAMA_CPP_CONSOLE_BUILD_MARKER=$(Quote-Bash $ProcessMarker); export LOCAL_LLM_CONSOLE_BUILD_MARKER=$(Quote-Bash $ProcessMarker)" }
+  $MarkerExport = if ([string]::IsNullOrWhiteSpace($ProcessMarker)) { ":" } else { "export LLAMA_CPP_WINDOWS_MANAGER_BUILD_MARKER=$(Quote-Bash $ProcessMarker); export LLAMA_CPP_CONSOLE_BUILD_MARKER=$(Quote-Bash $ProcessMarker); export LOCAL_LLM_CONSOLE_BUILD_MARKER=$(Quote-Bash $ProcessMarker)" }
   $CudaPreflight = if ($Cuda) {
 @'
 if command -v nvcc >/dev/null 2>&1; then

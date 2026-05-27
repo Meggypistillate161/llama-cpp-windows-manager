@@ -36,17 +36,17 @@ public sealed partial class ReleaseHardeningTests
 
 
     [Fact]
-    public void MainWindowUsesLlamaCppConsoleBrandingAndIcon()
+    public void MainWindowUsesLlamaCppWindowsManagerBrandingAndIcon()
     {
         var xaml = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.xaml"));
         var source = ReadMainWindowSources();
         var project = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "LocalLlmConsole.App.csproj"));
         var iconPath = FindRepositoryFile("src", "LocalLlmConsole.App", "Assets", "AppIcon.ico");
 
-        Assert.Contains("Title=\"llama.cpp Console v1.1\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("AppDisplayName = \"llama.cpp Console\"", source, StringComparison.Ordinal);
-        Assert.Contains("AppVersionLabel = \"v1.1\"", source, StringComparison.Ordinal);
-        Assert.Contains("<AssemblyName>LlamaCppConsole</AssemblyName>", project, StringComparison.Ordinal);
+        Assert.Contains("Title=\"llama.cpp Windows Manager v1.1.2\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("AppDisplayName = \"llama.cpp Windows Manager\"", source, StringComparison.Ordinal);
+        Assert.Contains("AppVersionLabel = \"v1.1.2\"", source, StringComparison.Ordinal);
+        Assert.Contains("<AssemblyName>LlamaCppWindowsManager</AssemblyName>", project, StringComparison.Ordinal);
         Assert.Contains("<ApplicationIcon>Assets\\AppIcon.ico</ApplicationIcon>", project, StringComparison.Ordinal);
         Assert.True(new FileInfo(iconPath).Length > 1024);
     }
@@ -277,7 +277,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("SettingsPageRows", source, StringComparison.Ordinal);
         Assert.Contains("CacheMaintenanceService.Size(_settings.CacheRoot)", source, StringComparison.Ordinal);
         Assert.Contains("ClearCacheAsync", source, StringComparison.Ordinal);
-        Assert.Contains("<RepositoryUrl>https://github.com/alekk89/llama.cpp-Console</RepositoryUrl>", project, StringComparison.Ordinal);
+        Assert.Contains("<RepositoryUrl>https://github.com/alekk89/llama-cpp-windows-manager</RepositoryUrl>", project, StringComparison.Ordinal);
 
         var updatesStart = source.IndexOf("private void ShowUpdates()", StringComparison.Ordinal);
         Assert.True(updatesStart >= 0);
@@ -313,10 +313,14 @@ public sealed partial class ReleaseHardeningTests
         var rows = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Models", "UiRows.cs"));
 
         Assert.Contains("new(\"Network\", \"API key\", \"modelApiKey\", _settings.ModelApiKey, \"secret\", Action: \"Generate\")", settings, StringComparison.Ordinal);
-        Assert.Contains("SettingsSecretActionsColumn", settings, StringComparison.Ordinal);
+        Assert.Contains("SettingsActionsColumn", settings, StringComparison.Ordinal);
+        Assert.DoesNotContain("Header = \"Secret\"", settings, StringComparison.Ordinal);
         Assert.Contains("SettingsRevealSecretRow_Click", settings, StringComparison.Ordinal);
         Assert.Contains("SettingsCopySecretRow_Click", settings, StringComparison.Ordinal);
         Assert.Contains("Clipboard.SetText(value)", settings, StringComparison.Ordinal);
+        Assert.Contains("SettingsActionButton(nameof(EditableSettingRow.RevealAction)", settings, StringComparison.Ordinal);
+        Assert.Contains("SettingsActionButton(nameof(EditableSettingRow.CopyAction)", settings, StringComparison.Ordinal);
+        Assert.Contains("SettingsActionButton(nameof(EditableSettingRow.Action)", settings, StringComparison.Ordinal);
         Assert.Contains("API key copied to clipboard.", settings, StringComparison.Ordinal);
         Assert.Contains("IsSecretVisible", rows, StringComparison.Ordinal);
         Assert.Contains("RevealAction", rows, StringComparison.Ordinal);
@@ -384,6 +388,9 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("AddButtonColumn(_runtimeJobsGrid, \"Log\"", source, StringComparison.Ordinal);
         Assert.Contains("private bool _showAdvancedRuntimes;", source, StringComparison.Ordinal);
         Assert.Contains("Button(_showAdvancedRuntimes ? \"Hide advanced\" : \"Show advanced\"", source, StringComparison.Ordinal);
+        Assert.Contains("CUDA downloads", source, StringComparison.Ordinal);
+        Assert.Contains("_runtimeCudaPreferenceCombo = LaunchCombo(AppPreferenceService.CudaPackagePreferenceOptions())", source, StringComparison.Ordinal);
+        Assert.Contains("ChangeRuntimeCudaPackagePreferenceAsync", source, StringComparison.Ordinal);
         Assert.Contains("if (_showAdvancedRuntimes)", source, StringComparison.Ordinal);
         var showRuntimes = source.IndexOf("private void ShowRuntimes()", StringComparison.Ordinal);
         Assert.True(source.IndexOf("Button(_showAdvancedRuntimes ? \"Hide advanced\" : \"Show advanced\"", showRuntimes, StringComparison.Ordinal)
@@ -420,6 +427,10 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("trayAndTaskbar", AppPreferenceService.MinimizeBehavior("Tray + taskbar"));
         Assert.Equal("lan", AppPreferenceService.ModelAccessMode("network access"));
         Assert.Equal("0.0.0.0", AppPreferenceService.RuntimeHostForAccessMode("lan"));
+        Assert.Equal("latest", settings.CudaPackagePreference);
+        Assert.Equal(["Latest", "Compatibility"], AppPreferenceService.CudaPackagePreferenceOptions());
+        Assert.Equal("latest", AppPreferenceService.CudaPackagePreference("Latest"));
+        Assert.Equal("compatibility", AppPreferenceService.CudaPackagePreference("CUDA 12 compatibility"));
         Assert.True(AppPreferenceService.YesNoValue("on", fallback: false));
         Assert.True(AppPreferenceService.TryIntValue("42", out var parsed));
         Assert.Equal(42, parsed);
@@ -905,18 +916,18 @@ public sealed partial class ReleaseHardeningTests
         updatesVm.SetLatestUpdate(new AppUpdateInfo(
             true,
             "v1.0",
-            "v1.1.0",
-            "Release v1.1.0",
+            "v1.1.2",
+            "Release v1.1.2",
             new string('x', 1900),
             "https://example.com/release",
-            "LlamaCppConsole.exe",
+            "LlamaCppWindowsManager.exe",
             "https://example.com/download",
             123));
 
         Assert.True(updatesVm.HasAvailableUpdate);
         Assert.Equal("Install Update", updatesVm.NavigationText);
-        Assert.Contains("v1.0 -> v1.1.0", updatesVm.StatusText, StringComparison.Ordinal);
-        Assert.Contains("Release v1.1.0", updatesVm.LatestReleaseText, StringComparison.Ordinal);
+        Assert.Contains("v1.0 -> v1.1.2", updatesVm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Release v1.1.2", updatesVm.LatestReleaseText, StringComparison.Ordinal);
         Assert.True(updatesVm.LatestReleaseText.Length < 1900);
     }
 

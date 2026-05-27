@@ -8,7 +8,9 @@ $ErrorActionPreference = "Stop"
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $TestProject = Join-Path $AppDir "tests\LocalLlmConsole.Tests\LocalLlmConsole.Tests.csproj"
 $BundledDotnet = Join-Path (Split-Path -Parent $AppDir) ".dotnet-sdk-8\dotnet.exe"
-$Dotnet = if ($env:LLAMA_CPP_CONSOLE_DOTNET) {
+$Dotnet = if ($env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET) {
+  $env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET
+} elseif ($env:LLAMA_CPP_CONSOLE_DOTNET) {
   $env:LLAMA_CPP_CONSOLE_DOTNET
 } elseif ($env:LOCAL_LLM_CONSOLE_DOTNET) {
   $env:LOCAL_LLM_CONSOLE_DOTNET
@@ -39,4 +41,3 @@ if (-not [string]::IsNullOrWhiteSpace($Filter)) {
 
 & $Dotnet @args
 if ($LASTEXITCODE -ne 0) { throw "dotnet test failed." }
-

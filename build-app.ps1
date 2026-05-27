@@ -8,7 +8,9 @@ $ErrorActionPreference = "Stop"
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $BundledDotnet = Join-Path (Split-Path -Parent $AppDir) ".dotnet-sdk-8\dotnet.exe"
-$Dotnet = if ($env:LLAMA_CPP_CONSOLE_DOTNET) {
+$Dotnet = if ($env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET) {
+  $env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET
+} elseif ($env:LLAMA_CPP_CONSOLE_DOTNET) {
   $env:LLAMA_CPP_CONSOLE_DOTNET
 } elseif ($env:LOCAL_LLM_CONSOLE_DOTNET) {
   $env:LOCAL_LLM_CONSOLE_DOTNET
@@ -40,4 +42,4 @@ if ($Restore) {
 & $Dotnet build $Project -c $Configuration --no-restore
 if ($LASTEXITCODE -ne 0) { throw "dotnet build failed." }
 
-Write-Host "Built llama.cpp Console app." -ForegroundColor Green
+Write-Host "Built llama.cpp Windows Manager app." -ForegroundColor Green

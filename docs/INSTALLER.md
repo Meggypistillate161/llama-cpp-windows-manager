@@ -7,8 +7,10 @@ The installer is built with Inno Setup 6 from the self-contained `win-x64` publi
 Install Inno Setup 6, make sure `ISCC.exe` is on `PATH`, or set:
 
 ```powershell
-$env:LLAMA_CPP_CONSOLE_INNO_SETUP = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+$env:LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ```
+
+The legacy `LLAMA_CPP_CONSOLE_INNO_SETUP` variable is still accepted.
 
 Then run:
 
@@ -25,21 +27,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 The setup executable is written to:
 
 ```text
-dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe
+dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe
 ```
 
 ## Install Behavior
 
-- Fresh installs prefer `D:\LlamaCppConsole` when the `D:` drive exists.
-- If `D:` is unavailable, the installer defaults to `%LocalAppData%\Programs\LlamaCppConsole`.
+- Fresh installs prefer `D:\LlamaCppWindowsManager` when the `D:` drive exists.
+- If `D:` is unavailable, the installer defaults to `%LocalAppData%\Programs\LlamaCppWindowsManager`.
 - The install folder is still editable in the setup wizard before files are copied.
 - Existing installations are detected by a stable Inno Setup `AppId`, so updates and repairs reuse the previous install folder.
+- Updating an older install removes the old `LlamaCppConsole.exe` app binary while preserving the existing install directory and `data` folder.
 - The final installer page includes a launch-after-install option.
 - The installer creates a Start Menu shortcut and offers an optional Desktop shortcut.
 
 ## Data Preservation
 
-The app creates its workspace under `data` beside `LlamaCppConsole.exe` when that location is writable:
+The app creates its workspace under `data` beside `LlamaCppWindowsManager.exe` when that location is writable:
 
 ```text
 data\

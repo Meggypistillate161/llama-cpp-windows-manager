@@ -6,15 +6,15 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>LlamaCppConsole</AssemblyName>
+    <AssemblyName>LlamaCppWindowsManager</AssemblyName>
     <RootNamespace>LocalLlmConsole</RootNamespace>
-    <AssemblyTitle>llama.cpp Console</AssemblyTitle>
-    <Product>llama.cpp Console</Product>
-    <RepositoryUrl>https://github.com/alekk89/llama.cpp-Console</RepositoryUrl>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
-    <InformationalVersion>v1.1</InformationalVersion>
+    <AssemblyTitle>llama.cpp Windows Manager</AssemblyTitle>
+    <Product>llama.cpp Windows Manager</Product>
+    <RepositoryUrl>https://github.com/alekk89/llama-cpp-windows-manager</RepositoryUrl>
+    <Version>1.1.2</Version>
+    <AssemblyVersion>1.1.2.0</AssemblyVersion>
+    <FileVersion>1.1.2.0</FileVersion>
+    <InformationalVersion>v1.1.2</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>

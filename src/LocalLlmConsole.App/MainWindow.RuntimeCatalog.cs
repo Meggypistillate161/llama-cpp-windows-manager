@@ -71,6 +71,19 @@ public partial class MainWindow
         _viewModel.RuntimePackages.ReplacePresets(RuntimePackagePresetRows(), runtimes, _runtimePackageUpdateStates);
     }
 
+    private async Task ChangeRuntimeCudaPackagePreferenceAsync()
+    {
+        var preference = AppPreferenceService.CudaPackagePreference(_runtimeCudaPreferenceCombo?.SelectedItem?.ToString() ?? "");
+        if (string.Equals(preference, AppPreferenceService.CudaPackagePreference(_settings.CudaPackagePreference), StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _settings = _settings with { CudaPackagePreference = preference };
+        _runtimePackageUpdateStates.Clear();
+        await PersistSettingsAsync();
+        await RefreshRuntimesAsync();
+        SetStatus($"CUDA downloads set to {AppPreferenceService.CudaPackagePreferenceLabel(preference)}.");
+    }
+
     private IReadOnlyList<RuntimePackagePreset> RuntimePackagePresetRows()
         => RuntimePackageCatalogService.PresetRows();
 

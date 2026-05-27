@@ -66,6 +66,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("--version >/dev/null 2>&1", script, StringComparison.Ordinal);
         Assert.Contains("probe_ld_path", script, StringComparison.Ordinal);
         Assert.Contains("Resolve-WslDistroName", script, StringComparison.Ordinal);
+        Assert.Contains("LLAMA_CPP_WINDOWS_MANAGER_BUILD_MARKER", script, StringComparison.Ordinal);
         Assert.Contains("LLAMA_CPP_CONSOLE_BUILD_MARKER", script, StringComparison.Ordinal);
         Assert.Contains("LOCAL_LLM_CONSOLE_BUILD_MARKER", script, StringComparison.Ordinal);
         Assert.DoesNotContain("exit \"`$build_status", script, StringComparison.Ordinal);
@@ -85,6 +86,7 @@ public sealed partial class ReleaseHardeningTests
         var deleteUbuntu = WslSetupCommands.DeleteUbuntuPowerShell("C:\\Windows\\System32\\wsl.exe", "Ubuntu-24.04");
         var windowsCpuInstall = WindowsSetupCommands.InstallCpuToolsPowerShell();
 
+        Assert.Contains("LLAMA_CPP_WINDOWS_MANAGER_BUILD_MARKER=marker'\"'\"'1", cleanup, StringComparison.Ordinal);
         Assert.Contains("LLAMA_CPP_CONSOLE_BUILD_MARKER=marker'\"'\"'1", cleanup, StringComparison.Ordinal);
         Assert.Contains("LOCAL_LLM_CONSOLE_BUILD_MARKER=marker'\"'\"'1", cleanup, StringComparison.Ordinal);
         Assert.Contains("/proc/[0-9]*/environ", cleanup, StringComparison.Ordinal);

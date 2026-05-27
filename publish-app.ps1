@@ -12,12 +12,14 @@ $ErrorActionPreference = "Stop"
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $DistRoot = [System.IO.Path]::GetFullPath((Join-Path $AppDir "dist"))
-$PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppConsole-$Runtime"))
+$PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppWindowsManager-$Runtime"))
 if (-not ($PublishDir.StartsWith($DistRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase))) {
   throw "Refusing to publish outside the dist folder: $PublishDir"
 }
 $BundledDotnet = Join-Path (Split-Path -Parent $AppDir) ".dotnet-sdk-8\dotnet.exe"
-$Dotnet = if ($env:LLAMA_CPP_CONSOLE_DOTNET) {
+$Dotnet = if ($env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET) {
+  $env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET
+} elseif ($env:LLAMA_CPP_CONSOLE_DOTNET) {
   $env:LLAMA_CPP_CONSOLE_DOTNET
 } elseif ($env:LOCAL_LLM_CONSOLE_DOTNET) {
   $env:LOCAL_LLM_CONSOLE_DOTNET
@@ -55,7 +57,8 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed." }
 Get-ChildItem -Path $PublishDir -Recurse -Filter *.pdb -File -ErrorAction SilentlyContinue |
   Remove-Item -Force
 
-$Exe = Join-Path $PublishDir "LlamaCppConsole.exe"
+$Exe = Join-Path $PublishDir "LlamaCppWindowsManager.exe"
+$LegacyExe = Join-Path $PublishDir "LlamaCppConsole.exe"
 if ($CertificateThumbprint) {
   $Cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
     Where-Object { $_.Thumbprint -replace '\s', '' -ieq ($CertificateThumbprint -replace '\s', '') } |
@@ -73,9 +76,24 @@ if ($PublishedSignature.Status -ne "Valid") {
   Write-Warning "Published executable is not signed. Use -CertificateThumbprint and -RequireSigned for public release builds."
 }
 
+Copy-Item -LiteralPath $Exe -Destination $LegacyExe -Force
+
 $ExeHash = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
 $ExeHashPath = "$Exe.sha256"
 Set-Content -LiteralPath $ExeHashPath -Value "$ExeHash  $(Split-Path -Leaf $Exe)" -Encoding ascii
 
-Write-Host "Published llama.cpp Console self-contained app to $PublishDir" -ForegroundColor Green
+$LegacyExeHashPath = "$LegacyExe.sha256"
+Set-Content -LiteralPath $LegacyExeHashPath -Value "$ExeHash  $(Split-Path -Leaf $LegacyExe)" -Encoding ascii
+
+$ZipPath = Join-Path $DistRoot "LlamaCppWindowsManager-$Runtime.zip"
+if (Test-Path -LiteralPath $ZipPath) {
+  Remove-Item -LiteralPath $ZipPath -Force
+}
+Compress-Archive -Path (Join-Path $PublishDir "*") -DestinationPath $ZipPath -Force
+$ZipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$ZipHashPath = "$ZipPath.sha256"
+Set-Content -LiteralPath $ZipHashPath -Value "$ZipHash  $(Split-Path -Leaf $ZipPath)" -Encoding ascii
+
+Write-Host "Published llama.cpp Windows Manager self-contained app to $PublishDir" -ForegroundColor Green
 Write-Host "Wrote SHA-256 companion file to $ExeHashPath" -ForegroundColor Green
+Write-Host "Wrote portable release archive to $ZipPath" -ForegroundColor Green

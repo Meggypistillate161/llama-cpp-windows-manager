@@ -23,10 +23,12 @@ public sealed record InstalledUpdateNotice(string Version, string ReleaseName, s
 
 public sealed class AppUpdateService
 {
-    public const string RepositoryUrl = "https://github.com/alekk89/llama.cpp-Console";
-    public const string PortableExeName = "LlamaCppConsole.exe";
+    public const string RepositoryUrl = "https://github.com/alekk89/llama-cpp-windows-manager";
+    public const string PortableExeName = "LlamaCppWindowsManager.exe";
+    public const string LegacyPortableExeName = "LlamaCppConsole.exe";
 
-    private const string UserAgent = "llama-cpp-console-updater";
+    private const string UserAgent = "llama-cpp-windows-manager-updater";
+    private static readonly string[] PortableExeNames = [PortableExeName, LegacyPortableExeName];
     private readonly HttpClient _http;
 
     public AppUpdateService(HttpClient? http = null)
@@ -98,7 +100,7 @@ public sealed class AppUpdateService
     public async Task<AppUpdateInstallPlan> StageInstallAsync(AppUpdateInfo update, string workspaceRoot, string? currentExecutablePath, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(update.AssetUrl))
-            throw new InvalidOperationException("The latest GitHub release does not include a portable llama.cpp Console asset.");
+            throw new InvalidOperationException("The latest GitHub release does not include a portable llama.cpp Windows Manager asset.");
         var hasInlineChecksum = !string.IsNullOrWhiteSpace(update.ExpectedSha256);
         if (hasInlineChecksum && string.IsNullOrWhiteSpace(NormalizeSha256(update.ExpectedSha256)))
             throw new InvalidOperationException("The latest GitHub release includes an invalid SHA-256 checksum. Refusing to stage an unverifiable update.");
@@ -108,7 +110,7 @@ public sealed class AppUpdateService
         var targetExe = string.IsNullOrWhiteSpace(currentExecutablePath)
             ? Path.Combine(AppContext.BaseDirectory, PortableExeName)
             : Path.GetFullPath(currentExecutablePath);
-        if (!Path.GetFileName(targetExe).Equals(PortableExeName, StringComparison.OrdinalIgnoreCase))
+        if (!IsPortableExeName(Path.GetFileName(targetExe)))
             targetExe = Path.Combine(Path.GetDirectoryName(targetExe) ?? AppContext.BaseDirectory, PortableExeName);
 
         var safeVersion = RegexSafeFileName(update.LatestVersion);
@@ -131,7 +133,7 @@ public sealed class AppUpdateService
 
         var noticePath = PendingNoticePath(workspaceRoot);
         Directory.CreateDirectory(Path.GetDirectoryName(noticePath)!);
-        var scriptPath = Path.Combine(stageRoot, "Install-LlamaCppConsoleUpdate.ps1");
+        var scriptPath = Path.Combine(stageRoot, "Install-LlamaCppWindowsManagerUpdate.ps1");
         await File.WriteAllTextAsync(scriptPath, UpdaterScript(), new UTF8Encoding(false), cancellationToken);
         return new AppUpdateInstallPlan(scriptPath, stagedExe, targetExe, noticePath);
     }
@@ -230,7 +232,9 @@ public sealed class AppUpdateService
         if (Directory.Exists(extractRoot)) Directory.Delete(extractRoot, recursive: true);
         Directory.CreateDirectory(extractRoot);
         ZipFile.ExtractToDirectory(assetPath, extractRoot);
-        var stagedExe = Directory.EnumerateFiles(extractRoot, PortableExeName, SearchOption.AllDirectories).FirstOrDefault()
+        var stagedExe = PortableExeNames
+            .SelectMany(name => Directory.EnumerateFiles(extractRoot, name, SearchOption.AllDirectories))
+            .FirstOrDefault()
             ?? throw new InvalidOperationException($"The update archive does not contain {PortableExeName}.");
         ValidateStagedExe(stagedExe);
         return stagedExe;
@@ -280,12 +284,17 @@ public sealed class AppUpdateService
             .Where(asset => !string.IsNullOrWhiteSpace(asset.Name) && !string.IsNullOrWhiteSpace(asset.Url))
             .ToList();
 
-        return candidates.FirstOrDefault(asset => asset.Name.Equals(PortableExeName, StringComparison.OrdinalIgnoreCase))
+        return PortableExeNames
+            .Select(name => candidates.FirstOrDefault(asset => asset.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            .FirstOrDefault(asset => !string.IsNullOrWhiteSpace(asset.Name))
             is var exact && !string.IsNullOrWhiteSpace(exact.Name) ? exact
             : candidates.FirstOrDefault(asset => asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && asset.Name.Contains("win-x64", StringComparison.OrdinalIgnoreCase))
                 is var zip && !string.IsNullOrWhiteSpace(zip.Name) ? zip
             : candidates.FirstOrDefault(asset => asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsPortableExeName(string name)
+        => PortableExeNames.Any(candidate => candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     private static (string Name, string Url) SelectChecksumAsset(JsonArray? assets, string assetName)
     {

@@ -1,10 +1,10 @@
-#define AppName "llama.cpp Console"
-#define AppExeName "LlamaCppConsole.exe"
+#define AppName "llama.cpp Windows Manager"
+#define AppExeName "LlamaCppWindowsManager.exe"
 #ifndef AppVersion
-#define AppVersion "1.1.0"
+#define AppVersion "1.1.2"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\dist\LlamaCppConsole-win-x64"
+#define SourceDir "..\dist\LlamaCppWindowsManager-win-x64"
 #endif
 #ifndef OutputDir
 #define OutputDir "..\dist\installer"
@@ -14,17 +14,18 @@
 AppId={{5C6D440C-0EE0-4FEC-8D86-6AADEAA24620}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=LocalLlmConsole contributors
-AppPublisherURL=https://github.com/alekk89/llama.cpp-Console
-AppSupportURL=https://github.com/alekk89/llama.cpp-Console/issues
-AppUpdatesURL=https://github.com/alekk89/llama.cpp-Console/releases
+AppPublisher=llama.cpp Windows Manager contributors
+AppPublisherURL=https://github.com/alekk89/llama-cpp-windows-manager
+AppSupportURL=https://github.com/alekk89/llama-cpp-windows-manager/issues
+AppUpdatesURL=https://github.com/alekk89/llama-cpp-windows-manager/releases
 DefaultDirName={code:GetDefaultDirName}
 DefaultGroupName={#AppName}
 UsePreviousAppDir=yes
+UsePreviousGroup=no
 UsePreviousTasks=yes
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
-OutputBaseFilename=LlamaCppConsole-Setup-{#AppVersion}-win-x64
+OutputBaseFilename=LlamaCppWindowsManager-Setup-{#AppVersion}-win-x64
 SetupIconFile=..\src\LocalLlmConsole.App\Assets\AppIcon.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -37,7 +38,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 VersionInfoVersion={#AppVersion}
-VersionInfoCompany=LocalLlmConsole contributors
+VersionInfoCompany=llama.cpp Windows Manager contributors
 VersionInfoDescription={#AppName} Installer
 VersionInfoProductName={#AppName}
 VersionInfoProductVersion={#AppVersion}
@@ -50,6 +51,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\LlamaCppConsole.exe"
+Type: files; Name: "{userprograms}\llama.cpp Console\llama.cpp Console.lnk"
+Type: dirifempty; Name: "{userprograms}\llama.cpp Console"
+Type: files; Name: "{userdesktop}\llama.cpp Console.lnk"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
@@ -65,9 +72,9 @@ var
 function GetDefaultDirName(Param: string): string;
 begin
   if DirExists('D:\') then
-    Result := 'D:\LlamaCppConsole'
+    Result := 'D:\LlamaCppWindowsManager'
   else
-    Result := ExpandConstant('{localappdata}\Programs\LlamaCppConsole');
+    Result := ExpandConstant('{localappdata}\Programs\LlamaCppWindowsManager');
 end;
 
 function InitializeUninstall(): Boolean;
@@ -82,7 +89,7 @@ begin
   begin
     DeleteAppDataOnUninstall :=
       MsgBox(
-        'Uninstall llama.cpp Console?' + #13#10 + #13#10 +
+        'Uninstall llama.cpp Windows Manager?' + #13#10 + #13#10 +
         'Your models, runtimes, logs, cache, and settings in:' + #13#10 +
         DataDir + #13#10 + #13#10 +
         'will be kept by default. Delete this data too?',

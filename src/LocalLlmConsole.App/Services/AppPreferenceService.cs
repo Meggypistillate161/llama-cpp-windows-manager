@@ -4,6 +4,7 @@ public static class AppPreferenceService
 {
     public static readonly string[] MinimizeBehaviorOptionLabels = ["Taskbar only", "Tray only", "Tray + taskbar"];
     public static readonly string[] ModelAccessModeOptionLabels = ["Local only", "LAN access"];
+    public static readonly string[] CudaPackagePreferenceOptionLabels = ["Latest", "Compatibility"];
     public static readonly string[] YesNoOptionLabels = ["Yes", "No"];
 
     public static string ThemeMode(string text)
@@ -50,6 +51,21 @@ public static class AppPreferenceService
         => ModelAccessMode(text) == "lan" ? "LAN access" : "Local only";
 
     public static IEnumerable<string> ModelAccessModeOptions() => ModelAccessModeOptionLabels;
+
+    public static string CudaPackagePreference(string text)
+    {
+        var value = (text ?? "").Trim()
+            .Replace("-", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("_", "", StringComparison.OrdinalIgnoreCase)
+            .Replace(" ", "", StringComparison.OrdinalIgnoreCase)
+            .ToLowerInvariant();
+        return value is "compatibility" or "compatible" or "cuda12" or "cuda12compatibility" ? "compatibility" : "latest";
+    }
+
+    public static string CudaPackagePreferenceLabel(string text)
+        => CudaPackagePreference(text) == "compatibility" ? "Compatibility" : "Latest";
+
+    public static IEnumerable<string> CudaPackagePreferenceOptions() => CudaPackagePreferenceOptionLabels;
 
     public static string YesNoLabel(bool value) => value ? "Yes" : "No";
 

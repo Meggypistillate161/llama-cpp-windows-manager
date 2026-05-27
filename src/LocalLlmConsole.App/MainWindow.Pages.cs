@@ -217,6 +217,7 @@ public partial class MainWindow
         _runtimePackageGrid = null;
         _runtimeBuildGrid = null;
         _runtimeJobsGrid = null;
+        _runtimeCudaPreferenceCombo = null;
         var root = new Grid { Margin = new Thickness(16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_showAdvancedRuntimes ? .72 : 1, GridUnitType.Star), MinHeight = 86 });
@@ -240,16 +241,36 @@ public partial class MainWindow
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         folderStrip.Margin = new Thickness(0);
         header.Children.Add(folderStrip);
+        var rightActions = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        rightActions.Children.Add(new TextBlock
+        {
+            Text = "CUDA downloads",
+            Foreground = (System.Windows.Media.Brush)WpfApplication.Current.Resources["TextMuted"],
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 8, 6)
+        });
+        _runtimeCudaPreferenceCombo = LaunchCombo(AppPreferenceService.CudaPackagePreferenceOptions());
+        _runtimeCudaPreferenceCombo.Width = 132;
+        _runtimeCudaPreferenceCombo.SelectedItem = AppPreferenceService.CudaPackagePreferenceLabel(_settings.CudaPackagePreference);
+        _runtimeCudaPreferenceCombo.ToolTip = TooltipText("Choose whether official CUDA runtime downloads prefer the newest CUDA asset or the CUDA 12 compatibility asset.");
+        _runtimeCudaPreferenceCombo.SelectionChanged += async (_, _) => await RunEventAsync(ChangeRuntimeCudaPackagePreferenceAsync);
+        rightActions.Children.Add(_runtimeCudaPreferenceCombo);
         _runtimeAdvancedToggleButton = Button(_showAdvancedRuntimes ? "Hide advanced" : "Show advanced", (_, _) =>
         {
             _showAdvancedRuntimes = !_showAdvancedRuntimes;
             ShowRuntimes();
         });
         SetButtonToolTip(_runtimeAdvancedToggleButton, _showAdvancedRuntimes ? "Hide source builds and runtime job history." : "Show source builds and runtime job history.");
-        _runtimeAdvancedToggleButton.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
         _runtimeAdvancedToggleButton.Margin = new Thickness(12, 0, 0, 6);
-        Grid.SetColumn(_runtimeAdvancedToggleButton, 1);
-        header.Children.Add(_runtimeAdvancedToggleButton);
+        rightActions.Children.Add(_runtimeAdvancedToggleButton);
+        Grid.SetColumn(rightActions, 1);
+        header.Children.Add(rightActions);
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 

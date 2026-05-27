@@ -4,7 +4,7 @@ Last updated: 2026-05-27
 
 ## Automated Gate
 
-Run from a clean checkout with the .NET 8 SDK on `PATH`, or set `LLAMA_CPP_CONSOLE_DOTNET` to an explicit SDK `dotnet.exe`. The legacy `LOCAL_LLM_CONSOLE_DOTNET` variable is still accepted.
+Run from a clean checkout with the .NET 8 SDK on `PATH`, or set `LLAMA_CPP_WINDOWS_MANAGER_DOTNET` to an explicit SDK `dotnet.exe`. The legacy `LLAMA_CPP_CONSOLE_DOTNET` and `LOCAL_LLM_CONSOLE_DOTNET` variables are still accepted.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
@@ -23,13 +23,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 
 ## Release Gate
 
-- Publish `dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe` from a clean checkout.
-- Build `dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe` from the published app with Inno Setup 6.
+- Publish `dist\LlamaCppWindowsManager-win-x64.zip` and `dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe` from a clean checkout.
+- Build `dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe` from the published app with Inno Setup 6.
 - Confirm the publish folder contains no `.pdb` files.
-- Confirm the published executable and installer each have a matching `.sha256` companion file. For signed builds, generate the companion file after signing.
-- Confirm fresh installer default path is `D:\LlamaCppConsole` when `D:` exists, `%LocalAppData%\Programs\LlamaCppConsole` when it does not, and that the setup wizard still allows the user to change the install folder.
+- Confirm the portable zip, published executable, and installer each have a matching `.sha256` companion file. For signed builds, generate the companion file after signing.
+- Confirm the portable zip contains both `LlamaCppWindowsManager.exe` and the legacy `LlamaCppConsole.exe` alias for renamed-app updates.
+- Confirm fresh installer default path is `D:\LlamaCppWindowsManager` when `D:` exists, `%LocalAppData%\Programs\LlamaCppWindowsManager` when it does not, and that the setup wizard still allows the user to change the install folder.
 - Confirm the installer detects an existing install and reuses its install directory on update or repair.
-- Confirm the final installer page can launch `LlamaCppConsole.exe`.
+- Confirm the final installer page can launch `LlamaCppWindowsManager.exe`.
 - Confirm installer update/repair does not delete `data`, models, runtimes, cache, logs, or state.
 - Confirm uninstall keeps `data` by default and only deletes it when the user explicitly chooses to delete app data.
 - Launch the published app on a clean Windows user profile with no repository checkout.
@@ -95,19 +96,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm manual Check For Updates shows a no-update popup when current, or an install confirmation when a newer release exists.
 - Confirm release assets include a matching SHA-256 companion file and that a bad checksum prevents staging.
 - Confirm a signed installed app refuses an unsigned or differently signed staged update.
-- Confirm a completed staged update restarts `LlamaCppConsole.exe` and shows the GitHub release notes.
+- Confirm a completed staged update restarts `LlamaCppWindowsManager.exe` and shows the GitHub release notes.
+- Confirm an older `LlamaCppConsole.exe` portable install can stage the v1.1.2 update without changing the target path unexpectedly.
+
+## Latest Local Verification
+
+Last verified on 2026-05-27:
+
+```powershell
+dotnet test LocalLlmConsole.sln -c Release --no-restore --filter "FullyQualifiedName~ReleaseHardeningTests"
+dotnet format LocalLlmConsole.sln --verify-no-changes --no-restore --verbosity minimal
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipPublish
+```
+
+Result: release-hardening tests passed, formatting was clean, the portable zip
+was produced with both executable names, and the v1.1.2 installer compiled.
 
 ## Manual Clean-Machine Test
 
 1. Start from a clean Windows VM.
-2. Install `dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe`.
-3. Confirm the installer prefers `D:\LlamaCppConsole` when `D:` exists and allows choosing a different folder before install.
+2. Install `dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe`.
+3. Confirm the installer prefers `D:\LlamaCppWindowsManager` when `D:` exists and allows choosing a different folder before install.
 4. Confirm the launch-after-install option opens the app.
 5. Confirm first launch creates `data\models`, `data\runtimes`, `data\cache`, `data\state`, and `data\logs` beside the exe when the install folder is writable.
 6. Run the installer again and confirm it detects and updates the existing install without deleting `data`.
 7. Uninstall and confirm `data` is kept by default; repeat on a disposable install and choose the explicit delete-data option to confirm data removal.
-8. Copy only `dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe` into a writable portable test folder.
-9. Confirm launching from a non-writable location falls back to `%LocalAppData%\llama.cpp Console`, reuses `%LocalAppData%\LocalLlmConsole` only for an existing legacy folder, or reports a clear workspace error.
+8. Copy only `dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe` into a writable portable test folder.
+9. Confirm launching from a non-writable location falls back to `%LocalAppData%\llama.cpp Windows Manager`, reuses `%LocalAppData%\llama.cpp Console` or `%LocalAppData%\LocalLlmConsole` only for an existing legacy folder, or reports a clear workspace error.
 10. Launch the app without Git, CMake, CUDA, or OpenCode.
 11. Verify the app opens, creates state, and explains missing Ubuntu/WSL prerequisites without crashing.
 12. Use Runtime Downloads to install an official prebuilt CPU Windows runtime, then confirm it appears in model launch runtime choices.

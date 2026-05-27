@@ -13,7 +13,7 @@ public partial class App : System.Windows.Application
         _singleInstanceMutex = new Mutex(true, @"Local\llama.cpp-console-single-instance", out var isFirstInstance);
         if (!isFirstInstance)
         {
-            ThemedMessageBox.Show("llama.cpp Console is already running.", "llama.cpp Console", MessageBoxButton.OK, MessageBoxImage.Information);
+            ThemedMessageBox.Show("llama.cpp Windows Manager is already running.", "llama.cpp Windows Manager", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
         }

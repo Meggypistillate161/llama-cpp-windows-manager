@@ -113,7 +113,7 @@ public sealed class LocalAppService : IAsyncDisposable
 
             if (path == "/" || path == "/api/health")
             {
-                await WriteJsonAsync(context, 200, new { ok = true, app = "llama.cpp Console", auth = "required", tokenHint = "WPF shell holds token in memory" });
+                await WriteJsonAsync(context, 200, new { ok = true, app = "llama.cpp Windows Manager", auth = "required", tokenHint = "WPF shell holds token in memory" });
                 return;
             }
             if (path == "/api/jobs")

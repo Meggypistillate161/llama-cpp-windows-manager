@@ -22,7 +22,7 @@ The repo does not own large data by default:
 - downloaded/extracted llama.cpp builds
 - OpenCode config
 
-The startup workspace is fixed for the process and defaults to `data` beside `LlamaCppConsole.exe` when that location is writable. If not, it falls back to `%LocalAppData%\llama.cpp Console`, while reusing `%LocalAppData%\LocalLlmConsole` only when that legacy pre-v1 folder already exists. It can be overridden with `LLAMA_CPP_CONSOLE_WORKSPACE` before launch; `LOCAL_LLM_CONSOLE_WORKSPACE` remains accepted as a legacy alias. Models and runtimes are configured in App Settings and stored in SQLite. Cache data is kept inside the fixed workspace and is not exposed as a separate Settings folder. The source tree now contains only the WPF app, tests, docs, and the helper script that is embedded in the exe and extracted on demand to `data\tools` for llama.cpp builds.
+The startup workspace is fixed for the process and defaults to `data` beside `LlamaCppWindowsManager.exe` when that location is writable. If not, it falls back to `%LocalAppData%\llama.cpp Windows Manager`, while reusing `%LocalAppData%\llama.cpp Console` or `%LocalAppData%\LocalLlmConsole` only when those legacy folders already exist. It can be overridden with `LLAMA_CPP_WINDOWS_MANAGER_WORKSPACE` before launch; `LLAMA_CPP_CONSOLE_WORKSPACE` and `LOCAL_LLM_CONSOLE_WORKSPACE` remain accepted as legacy aliases. Models and runtimes are configured in App Settings and stored in SQLite. Cache data is kept inside the fixed workspace and is not exposed as a separate Settings folder. The source tree now contains only the WPF app, tests, docs, and the helper script that is embedded in the exe and extracted on demand to `data\tools` for llama.cpp builds.
 
 ## Runtime Shape
 
@@ -78,7 +78,7 @@ Current:
 1. The Updates navigation item sits below Logs and defaults to **Check For Updates**.
 2. Startup checks the configured GitHub release feed in the background. When a newer release is found, the nav item changes to **Install Update**.
 3. Manual checks show either a no-updates popup or an install confirmation.
-4. Install downloads the release asset into `cache\app-updates`, extracts the portable exe when the asset is a zip, starts a hidden PowerShell handoff script, closes the app, replaces `LlamaCppConsole.exe`, and restarts it.
+4. Install downloads the release asset into `cache\app-updates`, extracts the portable exe when the asset is a zip, starts a hidden PowerShell handoff script, closes the app, replaces `LlamaCppWindowsManager.exe`, and restarts it.
 5. A matching SHA-256 companion asset is required and verified before extraction.
 6. If the installed app is signed, the staged update executable must be signed by the same certificate before replacement.
 7. The relaunched app shows the GitHub release name and notes from the installed update.

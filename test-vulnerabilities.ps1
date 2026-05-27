@@ -7,6 +7,9 @@ $ErrorActionPreference = "Stop"
 function Resolve-Dotnet {
   $appDir = $PSScriptRoot
   $bundledDotnet = Join-Path (Split-Path -Parent $appDir) ".dotnet-sdk-8\dotnet.exe"
+  if ($env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET) {
+    return $env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET
+  }
   if ($env:LLAMA_CPP_CONSOLE_DOTNET) {
     return $env:LLAMA_CPP_CONSOLE_DOTNET
   }

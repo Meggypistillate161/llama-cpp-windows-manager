@@ -62,8 +62,7 @@ public partial class MainWindow
         grid.Columns.Add(new DataGridTextColumn { Header = "Group", Binding = new WpfBinding(nameof(EditableSettingRow.Group)), IsReadOnly = true, ElementStyle = textStyle, MinWidth = 80, Width = new DataGridLength(120), CanUserResize = true });
         grid.Columns.Add(new DataGridTextColumn { Header = "Setting", Binding = new WpfBinding(nameof(EditableSettingRow.Label)), IsReadOnly = true, ElementStyle = textStyle, MinWidth = 110, Width = new DataGridLength(180), CanUserResize = true });
         grid.Columns.Add(SettingsValueColumn());
-        grid.Columns.Add(SettingsSecretActionsColumn());
-        AddButtonColumn(grid, "Action", nameof(EditableSettingRow.Action), nameof(EditableSettingRow.CanAction), SettingsRowAction_Click, .75, tooltipBinding: nameof(EditableSettingRow.ActionToolTip));
+        grid.Columns.Add(SettingsActionsColumn());
         root.Children.Add(GridFrame(grid));
         PageHost.Content = root;
     }
@@ -249,37 +248,35 @@ public partial class MainWindow
         };
     }
 
-    private DataGridTemplateColumn SettingsSecretActionsColumn()
+    private DataGridTemplateColumn SettingsActionsColumn()
     {
-        var root = new FrameworkElementFactory(typeof(StackPanel));
-        root.SetValue(StackPanel.OrientationProperty, System.Windows.Controls.Orientation.Horizontal);
+        var root = new FrameworkElementFactory(typeof(System.Windows.Controls.Primitives.UniformGrid));
+        root.SetValue(System.Windows.Controls.Primitives.UniformGrid.ColumnsProperty, 3);
         root.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 4, 0));
-        var rootStyle = new Style(typeof(StackPanel));
-        rootStyle.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        var showForSecret = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "secret" };
-        showForSecret.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible));
-        rootStyle.Triggers.Add(showForSecret);
-        root.SetValue(FrameworkElement.StyleProperty, rootStyle);
 
-        var revealButton = SettingsSecretActionButton(nameof(EditableSettingRow.RevealAction), nameof(EditableSettingRow.CanRevealAction), nameof(EditableSettingRow.RevealToolTip));
+        var revealButton = SettingsActionButton(nameof(EditableSettingRow.RevealAction), nameof(EditableSettingRow.CanRevealAction), nameof(EditableSettingRow.RevealToolTip));
         revealButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsRevealSecretRow_Click));
         root.AppendChild(revealButton);
 
-        var copyButton = SettingsSecretActionButton(nameof(EditableSettingRow.CopyAction), nameof(EditableSettingRow.CanCopyAction), nameof(EditableSettingRow.CopyToolTip));
+        var copyButton = SettingsActionButton(nameof(EditableSettingRow.CopyAction), nameof(EditableSettingRow.CanCopyAction), nameof(EditableSettingRow.CopyToolTip));
         copyButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsCopySecretRow_Click));
         root.AppendChild(copyButton);
 
+        var primaryButton = SettingsActionButton(nameof(EditableSettingRow.Action), nameof(EditableSettingRow.CanAction), nameof(EditableSettingRow.ActionToolTip));
+        primaryButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsRowAction_Click));
+        root.AppendChild(primaryButton);
+
         return new DataGridTemplateColumn
         {
-            Header = "Secret",
-            Width = new DataGridLength(.95, DataGridLengthUnitType.Star),
-            MinWidth = 132,
+            Header = "Action",
+            Width = new DataGridLength(1.35, DataGridLengthUnitType.Star),
+            MinWidth = 208,
             CanUserResize = true,
             CellTemplate = new DataTemplate { VisualTree = root }
         };
     }
 
-    private static FrameworkElementFactory SettingsSecretActionButton(string contentBinding, string enabledBinding, string tooltipBinding)
+    private static FrameworkElementFactory SettingsActionButton(string contentBinding, string enabledBinding, string tooltipBinding)
     {
         var button = new FrameworkElementFactory(typeof(WpfButton));
         button.SetBinding(ContentControl.ContentProperty, new WpfBinding(contentBinding));
@@ -291,7 +288,11 @@ public partial class MainWindow
         button.SetValue(System.Windows.Controls.Control.PaddingProperty, new Thickness(7, 1, 7, 2));
         button.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 1, 2, 1));
         button.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Stretch);
-        button.SetValue(FrameworkElement.StyleProperty, new Style(typeof(WpfButton), (Style)WpfApplication.Current.Resources[typeof(WpfButton)]));
+        var style = new Style(typeof(WpfButton), (Style)WpfApplication.Current.Resources[typeof(WpfButton)]);
+        var emptyTrigger = new Trigger { Property = ContentControl.ContentProperty, Value = "" };
+        emptyTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
+        style.Triggers.Add(emptyTrigger);
+        button.SetValue(FrameworkElement.StyleProperty, style);
         return button;
     }
 }

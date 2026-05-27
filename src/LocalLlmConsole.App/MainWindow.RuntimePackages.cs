@@ -47,7 +47,7 @@ public partial class MainWindow
             {
                 await UpdateRuntimePackageJobAsync(job, JobStatus.Running, preset, "install", "", "Resolving latest official llama.cpp release...");
                 var release = await RuntimePackageCatalogService.FetchLatestReleaseAsync(_runtimePackageClient);
-                var selection = RuntimePackageCatalogService.SelectAssets(preset, release);
+                var selection = RuntimePackageCatalogService.SelectAssets(preset, release, _settings.CudaPackagePreference);
                 installDir = RuntimePackageCatalogService.InstallDir(_settings.RuntimeRoot, selection);
                 var cacheDir = RuntimePackageCatalogService.DownloadCacheDir(_settings.CacheRoot, selection);
                 if (Directory.Exists(installDir))
@@ -115,6 +115,7 @@ public partial class MainWindow
         var installed = RuntimePackageCatalogService.InstalledPackages(allRuntimes, preset);
         var sourceBuilds = RuntimePackageCatalogService.MatchingSourceBuilds(allRuntimes, preset);
         var localTag = RuntimePackageCatalogService.LatestInstalledTag(installed);
+        var localAssets = RuntimePackageCatalogService.LatestInstalledAssetSummary(installed);
         var sourceCommit = RuntimePackageCatalogService.LatestSourceCommit(sourceBuilds);
         var localIdentity = RuntimePackageCatalogService.LocalIdentity(installed, sourceBuilds);
         var job = await _jobs.CreateAsync("runtime-package-update-check", RuntimePackageJobPayload(preset, "check", "", "Queued."));
@@ -127,10 +128,13 @@ public partial class MainWindow
             {
                 await UpdateRuntimePackageJobAsync(job, JobStatus.Running, preset, "check", "", "Checking official llama.cpp release assets...");
                 release = await RuntimePackageCatalogService.FetchLatestReleaseAsync(_runtimePackageClient);
-                var selection = RuntimePackageCatalogService.SelectAssets(preset, release);
+                var selection = RuntimePackageCatalogService.SelectAssets(preset, release, _settings.CudaPackagePreference);
                 var hasPackageTag = !string.IsNullOrWhiteSpace(localTag);
+                var hasAssetChange = hasPackageTag
+                    && !string.IsNullOrWhiteSpace(localAssets)
+                    && !RuntimePackageCatalogService.AssetSummariesMatch(localAssets, selection.AssetSummary);
                 var hasUpdate = hasPackageTag
-                    ? !string.Equals(localTag, selection.ReleaseTag, StringComparison.OrdinalIgnoreCase)
+                    ? !string.Equals(localTag, selection.ReleaseTag, StringComparison.OrdinalIgnoreCase) || hasAssetChange
                     : sourceBuilds.Count > 0
                         && !RuntimeMetadataService.CommitsMatch(sourceCommit, release.TargetCommit);
                 var message = installed.Count == 0 && sourceBuilds.Count == 0
@@ -140,7 +144,9 @@ public partial class MainWindow
                             ? $"Source build found at {RuntimeMetadataService.DisplayCommit(sourceCommit)}. Latest prebuilt release is {selection.ReleaseTag} ({RuntimeMetadataService.DisplayCommit(release.TargetCommit)})."
                             : $"Source build matches the latest release commit {RuntimeMetadataService.DisplayCommit(release.TargetCommit)}. Install the prebuilt package only if you want exact binary verification."
                     : hasUpdate
-                        ? $"Update available: {RuntimePackageCatalogService.DisplayTag(localTag)} -> {selection.ReleaseTag}. Use Update to install the new prebuilt runtime."
+                        ? hasAssetChange && string.Equals(localTag, selection.ReleaseTag, StringComparison.OrdinalIgnoreCase)
+                            ? $"Package variant available for {selection.ReleaseTag}. Use Update to install {selection.AssetSummary}."
+                            : $"Update available: {RuntimePackageCatalogService.DisplayTag(localTag)} -> {selection.ReleaseTag}. Use Update to install the new prebuilt runtime."
                         : $"Already current at {selection.ReleaseTag}.";
 
                 _runtimePackageUpdateStates[preset.Id] = new RuntimePackageUpdateState(hasUpdate, localTag, selection.ReleaseTag, selection.ReleaseUrl, selection.AssetSummary, DateTimeOffset.UtcNow, localIdentity, release.TargetCommit);

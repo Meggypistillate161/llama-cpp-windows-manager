@@ -59,7 +59,8 @@ public sealed record AppSettings(
     double SpecDraftPSplit,
     double SpecDraftPMin,
     string SpecDraftCacheTypeK,
-    string SpecDraftCacheTypeV)
+    string SpecDraftCacheTypeV,
+    string CudaPackagePreference)
 {
     public const int DefaultContextSize = 131_072;
     public const int DefaultGpuLayers = 999;
@@ -84,6 +85,7 @@ public sealed record AppSettings(
     public const double DefaultSpecDraftPMin = -1.0;
     public const int DefaultVisionImageMinTokens = 0;
     public const int DefaultVisionImageMaxTokens = 0;
+    public const string DefaultCudaPackagePreference = "latest";
 
     public static AppSettings CreateDefault(string workspaceRoot) => new(
         workspaceRoot,
@@ -144,5 +146,6 @@ public sealed record AppSettings(
         DefaultSpecDraftPSplit,
         DefaultSpecDraftPMin,
         DefaultCacheType,
-        DefaultCacheType);
+        DefaultCacheType,
+        DefaultCudaPackagePreference);
 }

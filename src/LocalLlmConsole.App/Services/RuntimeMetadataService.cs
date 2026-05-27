@@ -50,6 +50,39 @@ public static class RuntimeMetadataService
         return "";
     }
 
+    public static string PackageAssetSummary(RuntimeRecord runtime)
+    {
+        try
+        {
+            var metadata = JsonNode.Parse(runtime.MetadataJson);
+            var assets = ReadPackageAssetNames(metadata?["assets"]);
+            if (assets.Count > 0) return string.Join(", ", assets);
+
+            assets = ReadPackageAssetNames(metadata?["runtimeMetadata"]?["assets"]);
+            if (assets.Count > 0) return string.Join(", ", assets);
+        }
+        catch
+        {
+            // Try packaged metadata below.
+        }
+
+        try
+        {
+            var metadataPath = Path.Combine(Folder(runtime), "local-llm-runtime.json");
+            if (File.Exists(metadataPath))
+            {
+                var assets = ReadPackageAssetNames(JsonNode.Parse(File.ReadAllText(metadataPath))?["assets"]);
+                if (assets.Count > 0) return string.Join(", ", assets);
+            }
+        }
+        catch
+        {
+            // No package metadata is available.
+        }
+
+        return "";
+    }
+
     public static string RuntimeFingerprint(RuntimeRecord runtime)
     {
         try
@@ -309,5 +342,15 @@ public static class RuntimeMetadataService
 
         var value = node?.ToString() ?? "";
         return string.IsNullOrWhiteSpace(value) ? [] : [value];
+    }
+
+    private static IReadOnlyList<string> ReadPackageAssetNames(JsonNode? node)
+    {
+        if (node is not JsonArray array) return [];
+        return array
+            .Select(item => item is JsonObject obj ? obj["name"]?.ToString() ?? "" : item?.ToString() ?? "")
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 }

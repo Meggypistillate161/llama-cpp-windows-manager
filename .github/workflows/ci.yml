@@ -41,8 +41,13 @@ jobs:
       - name: Verify publish contents
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe"
+          $exe = Join-Path $PWD "dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe"
+          $legacyExe = Join-Path $PWD "dist\LlamaCppWindowsManager-win-x64\LlamaCppConsole.exe"
+          $zip = Join-Path $PWD "dist\LlamaCppWindowsManager-win-x64.zip"
           if (-not (Test-Path -LiteralPath $exe)) { throw "Published executable was not produced: $exe" }
           if (-not (Test-Path -LiteralPath "$exe.sha256")) { throw "Published executable checksum was not produced: $exe.sha256" }
+          if (-not (Test-Path -LiteralPath $legacyExe)) { throw "Legacy updater executable alias was not produced: $legacyExe" }
+          if (-not (Test-Path -LiteralPath $zip)) { throw "Portable release archive was not produced: $zip" }
+          if (-not (Test-Path -LiteralPath "$zip.sha256")) { throw "Portable release archive checksum was not produced: $zip.sha256" }
           $pdbs = Get-ChildItem -Path (Split-Path -Parent $exe) -Recurse -Filter *.pdb -File -ErrorAction SilentlyContinue
           if ($pdbs) { throw "Release publish contains PDB files." }

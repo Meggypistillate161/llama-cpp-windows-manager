@@ -16,6 +16,9 @@ function Resolve-InnoSetupCompiler([string] $ConfiguredPath) {
   if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
     $candidates += $ConfiguredPath
   }
+  if (-not [string]::IsNullOrWhiteSpace($env:LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP)) {
+    $candidates += $env:LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP
+  }
   if (-not [string]::IsNullOrWhiteSpace($env:LLAMA_CPP_CONSOLE_INNO_SETUP)) {
     $candidates += $env:LLAMA_CPP_CONSOLE_INNO_SETUP
   }
@@ -42,7 +45,7 @@ function Resolve-InnoSetupCompiler([string] $ConfiguredPath) {
     }
   }
 
-  throw "Inno Setup 6 compiler was not found. Install Inno Setup 6 or pass -InnoSetupPath / set LLAMA_CPP_CONSOLE_INNO_SETUP to ISCC.exe."
+  throw "Inno Setup 6 compiler was not found. Install Inno Setup 6 or pass -InnoSetupPath / set LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP to ISCC.exe."
 }
 
 function Read-ProjectVersion([string] $ProjectPath) {
@@ -81,13 +84,13 @@ function Sign-FileIfRequested([string] $PathToSign, [string] $Thumbprint, [strin
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $PublishScript = Join-Path $AppDir "publish-app.ps1"
-$InstallerScript = Join-Path $AppDir "installer\LlamaCppConsole.iss"
+$InstallerScript = Join-Path $AppDir "installer\LlamaCppWindowsManager.iss"
 $DistRoot = [System.IO.Path]::GetFullPath((Join-Path $AppDir "dist"))
-$PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppConsole-$Runtime"))
+$PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppWindowsManager-$Runtime"))
 $OutputDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "installer"))
-$PublishedExe = Join-Path $PublishDir "LlamaCppConsole.exe"
+$PublishedExe = Join-Path $PublishDir "LlamaCppWindowsManager.exe"
 $AppVersion = Read-ProjectVersion $Project
-$ExpectedInstaller = Join-Path $OutputDir "LlamaCppConsole-Setup-$AppVersion-$Runtime.exe"
+$ExpectedInstaller = Join-Path $OutputDir "LlamaCppWindowsManager-Setup-$AppVersion-$Runtime.exe"
 
 if (-not (Test-Path -LiteralPath $InstallerScript)) {
   throw "Installer script not found: $InstallerScript"
@@ -145,5 +148,5 @@ $InstallerHash = (Get-FileHash -LiteralPath $ExpectedInstaller -Algorithm SHA256
 $InstallerHashPath = "$ExpectedInstaller.sha256"
 Set-Content -LiteralPath $InstallerHashPath -Value "$InstallerHash  $(Split-Path -Leaf $ExpectedInstaller)" -Encoding ascii
 
-Write-Host "Built llama.cpp Console installer at $ExpectedInstaller" -ForegroundColor Green
+Write-Host "Built llama.cpp Windows Manager installer at $ExpectedInstaller" -ForegroundColor Green
 Write-Host "Wrote SHA-256 companion file to $InstallerHashPath" -ForegroundColor Green

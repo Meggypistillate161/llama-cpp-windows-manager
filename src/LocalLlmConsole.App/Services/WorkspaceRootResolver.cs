@@ -3,7 +3,8 @@ namespace LocalLlmConsole.Services;
 
 public static class WorkspaceRootResolver
 {
-    public const string EnvironmentVariable = "LLAMA_CPP_CONSOLE_WORKSPACE";
+    public const string EnvironmentVariable = "LLAMA_CPP_WINDOWS_MANAGER_WORKSPACE";
+    public const string LegacyConsoleEnvironmentVariable = "LLAMA_CPP_CONSOLE_WORKSPACE";
     public const string LegacyEnvironmentVariable = "LOCAL_LLM_CONSOLE_WORKSPACE";
 
     public static string Resolve()
@@ -27,10 +28,16 @@ public static class WorkspaceRootResolver
         var fallbackRoot = string.IsNullOrWhiteSpace(localAppDataRoot)
             ? AppContext.BaseDirectory
             : localAppDataRoot;
-        var preferredFallback = Path.Combine(fallbackRoot, "llama.cpp Console");
-        var legacyFallback = Path.Combine(fallbackRoot, "LocalLlmConsole");
-        if (!Directory.Exists(preferredFallback) && Directory.Exists(legacyFallback))
-            return Path.GetFullPath(legacyFallback);
+        var preferredFallback = Path.Combine(fallbackRoot, "llama.cpp Windows Manager");
+        var legacyProductFallback = Path.Combine(fallbackRoot, "llama.cpp Console");
+        var legacyCodeFallback = Path.Combine(fallbackRoot, "LocalLlmConsole");
+        if (!Directory.Exists(preferredFallback))
+        {
+            if (Directory.Exists(legacyProductFallback))
+                return Path.GetFullPath(legacyProductFallback);
+            if (Directory.Exists(legacyCodeFallback))
+                return Path.GetFullPath(legacyCodeFallback);
+        }
 
         return Path.GetFullPath(preferredFallback);
     }
@@ -38,6 +45,8 @@ public static class WorkspaceRootResolver
     private static string? FirstConfiguredWorkspace()
     {
         var configured = Environment.GetEnvironmentVariable(EnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+        configured = Environment.GetEnvironmentVariable(LegacyConsoleEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(configured)) return configured;
         return Environment.GetEnvironmentVariable(LegacyEnvironmentVariable);
     }

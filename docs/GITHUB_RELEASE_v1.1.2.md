@@ -1,13 +1,18 @@
-This release turns the app into a multi-runtime, multi-model `llama.cpp`
-console for Windows users. The normal path is now simple: install an official
-prebuilt runtime, choose Windows or WSL per model, and load one or more models
-on stable endpoints. Source builds are still available when you need custom or
-advanced runtime work.
+This release renames **llama.cpp Console** to **llama.cpp Windows Manager** and
+turns the app into a multi-runtime, multi-model Windows manager for
+`llama.cpp`. The normal path is now simple: install an official prebuilt
+runtime, choose Windows or WSL per model, and load one or more models on stable
+endpoints. Source builds are still available when you need custom or advanced
+runtime work.
 
 ## Highlights
 
 - Added official prebuilt `llama.cpp` runtime downloads as the main workflow.
+- Renamed the app to **llama.cpp Windows Manager**.
 - Added native Windows runtime support alongside Ubuntu/WSL runtimes.
+- Added a CUDA download preference in **Runtimes** so users can choose the
+  newest CUDA package or the CUDA 12 compatibility package when upstream
+  publishes both.
 - Added Intel Arc GPU support through SYCL runtime choices for Windows and WSL
   when upstream packages and the local driver/tool stack support them.
 - Added multi-model loading: run more than one model at the same time on
@@ -20,6 +25,8 @@ advanced runtime work.
   advanced setup/troubleshooting pages rather than the normal first-run path.
 - The Overview page now focuses on loaded model sessions, model size, state,
   runtime, endpoint, and live metrics for the selected model.
+- Settings now keeps API key **Show**, **Copy**, and **Generate** actions in one
+  compact action cell.
 
 ## Recommended Workflow
 
@@ -52,6 +59,9 @@ visibility.
 
 - Existing app data, models, runtimes, logs, cache, and settings are preserved
   by installer update/repair.
+- Existing `llama.cpp Console` links on GitHub redirect to the renamed
+  repository, and legacy portable-update paths remain supported by the v1.1.2
+  zip.
 - Existing models can keep using their saved launch settings; per-model ports
   are now the preferred way to keep OpenCode endpoints stable.
 - If you previously built runtimes from source, you can keep them or install the

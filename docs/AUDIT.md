@@ -4,7 +4,7 @@ Audit date: 2026-05-27
 
 ## Executive Summary
 
-Overall release posture: **v1.1.0 is ready as an unsigned community release
+Overall release posture: **v1.1.2 is ready as an unsigned community release
 with explicit SmartScreen and SHA-256 verification notes. Trusted code-signing
 and broader clean-machine/hardware validation remain follow-up hardening work,
 not hidden blockers for the current public release.**
@@ -56,8 +56,8 @@ The core release blockers from the full audit have been addressed in code:
 
 - Severity: Medium
 - Area: Distribution
-- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.1.0 asset naming are confirmed.
-- Required result: Latest GitHub release contains `LlamaCppConsole-win-x64.zip`, matching SHA-256 companion assets, and release notes suitable for the completion popup.
+- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.1.2 asset naming are confirmed.
+- Required result: Latest GitHub release contains `LlamaCppWindowsManager-win-x64.zip`, matching SHA-256 companion assets, and release notes suitable for the completion popup.
 
 ### WSL and hardware matrix
 
@@ -87,9 +87,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-app.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipPublish
 ```
 
-The latest local smoke test launched a published `LlamaCppConsole.exe`, confirmed the window title `llama.cpp Console v1.1`, and verified the local health endpoint.
+The latest local pre-release pass ran the release-hardening suite, verified formatting, published the portable zip, and compiled the v1.1.2 installer. The portable zip includes both `LlamaCppWindowsManager.exe` and the legacy `LlamaCppConsole.exe` alias for renamed-app update compatibility.
 
 ## Edge Cases To Keep Testing
 
@@ -108,6 +109,6 @@ The latest local smoke test launched a published `LlamaCppConsole.exe`, confirme
 
 ## Release Decision
 
-v1.1.0 is acceptable as a clearly unsigned public community release. A future
+v1.1.2 is acceptable as a clearly unsigned public community release. A future
 trusted/stable Windows distribution should add Authenticode signing, broader
 clean-machine smoke testing, and wider hardware matrix validation.

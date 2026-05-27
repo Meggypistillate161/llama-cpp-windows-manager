@@ -621,7 +621,12 @@ public sealed partial class ReleaseHardeningTests
                 runtimeMetadata = new
                 {
                     repoUrl = "https://github.com/ggml-org/llama.cpp",
-                    commit = "abcdef1234567890"
+                    commit = "abcdef1234567890",
+                    assets = new[]
+                    {
+                        new { name = "llama-b9354-bin-win-cuda-13.1-x64.zip" },
+                        new { name = "cudart-llama-bin-win-cuda-13.1-x64.zip" }
+                    }
                 }
             }),
             DateTimeOffset.UtcNow);
@@ -638,6 +643,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("official-windows-sycl", RuntimeMetadataService.ManagedPresetId(runtime with { Mode = RuntimeMode.Native, Backend = RuntimeBackend.Sycl, ExecutablePath = Path.Combine(runtimeRoot, "llama-server.exe") }));
         Assert.Equal(Path.Combine(root, "runtime"), RuntimeMetadataService.Folder(runtime));
         Assert.Equal("abcdef1234567890", RuntimeMetadataService.Commit(runtime));
+        Assert.Equal("llama-b9354-bin-win-cuda-13.1-x64.zip, cudart-llama-bin-win-cuda-13.1-x64.zip", RuntimeMetadataService.PackageAssetSummary(runtime));
         Assert.True(RuntimeMetadataService.CommitsMatch("abcdef12", "abcdef1234567890"));
         Assert.Equal("abcdef123456", RuntimeMetadataService.ShortCommit("abcdef1234567890"));
         Assert.Equal("commit unavailable", RuntimeMetadataService.DisplayCommit(""));
@@ -662,6 +668,7 @@ public sealed partial class ReleaseHardeningTests
             { "name": "llama-b9354-bin-win-vulkan-x64.zip", "browser_download_url": "https://example.com/win-vulkan.zip", "size": 4 },
             { "name": "llama-b9354-bin-win-sycl-x64.zip", "browser_download_url": "https://example.com/win-sycl.zip", "size": 9 },
             { "name": "llama-b9354-bin-win-cpu-x64.zip", "browser_download_url": "https://example.com/win-cpu.zip", "size": 5 },
+            { "name": "llama-b9354-bin-ubuntu-cuda-13.1-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-cuda13.tar.gz", "size": 11 },
             { "name": "llama-b9354-bin-ubuntu-cuda-12.4-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-cuda.tar.gz", "size": 8 },
             { "name": "llama-b9354-bin-ubuntu-vulkan-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-vulkan.tar.gz", "size": 6 },
             { "name": "llama-b9354-bin-ubuntu-sycl-f16-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-sycl.tar.gz", "size": 10 },
@@ -672,7 +679,9 @@ public sealed partial class ReleaseHardeningTests
 
         var presets = RuntimePackageCatalogService.PresetRows();
         var cuda = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-windows-cuda"), release);
+        var cudaCompatibility = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-windows-cuda"), release, "compatibility");
         var cudaWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-cuda"), release);
+        var cudaWslCompatibility = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-cuda"), release, "compatibility");
         var vulkanWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-vulkan"), release);
         var sycl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-windows-sycl"), release);
         var syclWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-sycl"), release);
@@ -681,10 +690,14 @@ public sealed partial class ReleaseHardeningTests
             ["official-prebuilt-windows-cuda", "official-prebuilt-cuda", "official-prebuilt-windows-vulkan", "official-prebuilt-vulkan", "official-prebuilt-windows-sycl", "official-prebuilt-sycl", "official-prebuilt-windows-cpu", "official-prebuilt-cpu"],
             presets.Select(preset => preset.Id).ToArray());
         Assert.Equal("b9354", release.TagName);
-        Assert.Equal("llama-b9354-bin-win-cuda-12.4-x64.zip", cuda.PrimaryAsset.Name);
-        Assert.Equal("cudart-llama-bin-win-cuda-12.4-x64.zip", Assert.Single(cuda.AdditionalAssets).Name);
-        Assert.Contains("cudart-llama-bin-win-cuda-12.4-x64.zip", cuda.AssetSummary, StringComparison.Ordinal);
-        Assert.Equal("llama-b9354-bin-ubuntu-cuda-12.4-x64.tar.gz", cudaWsl.PrimaryAsset.Name);
+        Assert.Equal("llama-b9354-bin-win-cuda-13.1-x64.zip", cuda.PrimaryAsset.Name);
+        Assert.Equal("cudart-llama-bin-win-cuda-13.1-x64.zip", Assert.Single(cuda.AdditionalAssets).Name);
+        Assert.Contains("cudart-llama-bin-win-cuda-13.1-x64.zip", cuda.AssetSummary, StringComparison.Ordinal);
+        Assert.True(RuntimePackageCatalogService.AssetSummariesMatch("cudart-llama-bin-win-cuda-13.1-x64.zip, llama-b9354-bin-win-cuda-13.1-x64.zip", cuda.AssetSummary));
+        Assert.Equal("llama-b9354-bin-win-cuda-12.4-x64.zip", cudaCompatibility.PrimaryAsset.Name);
+        Assert.Equal("cudart-llama-bin-win-cuda-12.4-x64.zip", Assert.Single(cudaCompatibility.AdditionalAssets).Name);
+        Assert.Equal("llama-b9354-bin-ubuntu-cuda-13.1-x64.tar.gz", cudaWsl.PrimaryAsset.Name);
+        Assert.Equal("llama-b9354-bin-ubuntu-cuda-12.4-x64.tar.gz", cudaWslCompatibility.PrimaryAsset.Name);
         Assert.Equal("CUDA WSL", RuntimePackageCatalogService.BackendLabel(cudaWsl.Preset));
         Assert.Equal("llama-b9354-bin-ubuntu-vulkan-x64.tar.gz", vulkanWsl.PrimaryAsset.Name);
         Assert.Equal("Vulkan WSL", RuntimePackageCatalogService.BackendLabel(vulkanWsl.Preset));

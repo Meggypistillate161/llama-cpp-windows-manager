@@ -52,7 +52,7 @@ public sealed partial class OpenCodeConfigService
 
     private const string LocalProviderPrefix = LocalProviderId + "-";
     private const string SchemaUrl = "https://opencode.ai/config.json";
-    private const string LocalProviderName = "llama.cpp Console";
+    private const string LocalProviderName = "llama.cpp Windows Manager";
     private readonly string _workspaceRoot;
 
     private static readonly JsonSerializerOptions PrettyJson = new()

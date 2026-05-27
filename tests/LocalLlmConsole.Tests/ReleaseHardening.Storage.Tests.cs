@@ -117,13 +117,15 @@ public sealed partial class ReleaseHardeningTests
 
         var settings = AppSettings.CreateDefault(root) with
         {
-            DeleteRuntimeSourceAfterSuccessfulBuild = false
+            DeleteRuntimeSourceAfterSuccessfulBuild = false,
+            CudaPackagePreference = "compatibility"
         };
 
         await store.SaveAppSettingsAsync(settings);
         var loaded = await store.GetAppSettingsAsync(root);
 
         Assert.False(loaded.DeleteRuntimeSourceAfterSuccessfulBuild);
+        Assert.Equal("compatibility", loaded.CudaPackagePreference);
     }
 
     [Fact]
@@ -296,7 +298,7 @@ public sealed partial class ReleaseHardeningTests
     public void WorkspaceRootDefaultsToDataFolderBesideExecutable()
     {
         var root = CreateTempRoot();
-        var executable = Path.Combine(root, "LlamaCppConsole.exe");
+        var executable = Path.Combine(root, "LlamaCppWindowsManager.exe");
         var localAppData = Path.Combine(root, "localappdata");
 
         var workspace = WorkspaceRootResolver.Resolve(null, executable, localAppData);
@@ -310,7 +312,7 @@ public sealed partial class ReleaseHardeningTests
     public void WorkspaceRootEnvironmentOverrideWins()
     {
         var root = CreateTempRoot();
-        var executable = Path.Combine(root, "LlamaCppConsole.exe");
+        var executable = Path.Combine(root, "LlamaCppWindowsManager.exe");
         var overrideRoot = Path.Combine(root, "custom-workspace");
 
         var workspace = WorkspaceRootResolver.Resolve(overrideRoot, executable, Path.Combine(root, "localappdata"));
@@ -326,16 +328,25 @@ public sealed partial class ReleaseHardeningTests
         var localAppData = Path.Combine(root, "localappdata");
         var freshWorkspace = WorkspaceRootResolver.Resolve(null, null, localAppData);
 
-        Assert.Equal(Path.Combine(localAppData, "llama.cpp Console"), freshWorkspace, ignoreCase: true);
-        Assert.Equal("LLAMA_CPP_CONSOLE_WORKSPACE", WorkspaceRootResolver.EnvironmentVariable);
+        Assert.Equal(Path.Combine(localAppData, "llama.cpp Windows Manager"), freshWorkspace, ignoreCase: true);
+        Assert.Equal("LLAMA_CPP_WINDOWS_MANAGER_WORKSPACE", WorkspaceRootResolver.EnvironmentVariable);
+        Assert.Equal("LLAMA_CPP_CONSOLE_WORKSPACE", WorkspaceRootResolver.LegacyConsoleEnvironmentVariable);
         Assert.Equal("LOCAL_LLM_CONSOLE_WORKSPACE", WorkspaceRootResolver.LegacyEnvironmentVariable);
 
-        var legacyWorkspace = Path.Combine(localAppData, "LocalLlmConsole");
+        var legacyWorkspace = Path.Combine(localAppData, "llama.cpp Console");
         Directory.CreateDirectory(legacyWorkspace);
 
         var reusedWorkspace = WorkspaceRootResolver.Resolve(null, null, localAppData);
 
         Assert.Equal(legacyWorkspace, reusedWorkspace, ignoreCase: true);
+
+        Directory.Delete(legacyWorkspace, recursive: true);
+        var legacyCodeWorkspace = Path.Combine(localAppData, "LocalLlmConsole");
+        Directory.CreateDirectory(legacyCodeWorkspace);
+
+        var reusedCodeWorkspace = WorkspaceRootResolver.Resolve(null, null, localAppData);
+
+        Assert.Equal(legacyCodeWorkspace, reusedCodeWorkspace, ignoreCase: true);
     }
 
 

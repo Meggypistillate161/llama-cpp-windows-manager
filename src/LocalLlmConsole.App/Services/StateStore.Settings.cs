@@ -110,7 +110,8 @@ public sealed partial class StateStore
             SpecDraftPSplit = DoubleValue("specDraftPSplit", defaults.SpecDraftPSplit),
             SpecDraftPMin = DoubleValue("specDraftPMin", defaults.SpecDraftPMin),
             SpecDraftCacheTypeK = StringValue("specDraftCacheTypeK", defaults.SpecDraftCacheTypeK),
-            SpecDraftCacheTypeV = StringValue("specDraftCacheTypeV", defaults.SpecDraftCacheTypeV)
+            SpecDraftCacheTypeV = StringValue("specDraftCacheTypeV", defaults.SpecDraftCacheTypeV),
+            CudaPackagePreference = AppPreferenceService.CudaPackagePreference(StringValue("cudaPackagePreference", defaults.CudaPackagePreference))
         };
 
         var migratedLegacyLaunchDefaults = false;
@@ -219,7 +220,8 @@ public sealed partial class StateStore
             ("specDraftPSplit", settings.SpecDraftPSplit),
             ("specDraftPMin", settings.SpecDraftPMin),
             ("specDraftCacheTypeK", settings.SpecDraftCacheTypeK),
-            ("specDraftCacheTypeV", settings.SpecDraftCacheTypeV)
+            ("specDraftCacheTypeV", settings.SpecDraftCacheTypeV),
+            ("cudaPackagePreference", AppPreferenceService.CudaPackagePreference(settings.CudaPackagePreference))
         };
 
         await WithConnectionAsync(async () =>

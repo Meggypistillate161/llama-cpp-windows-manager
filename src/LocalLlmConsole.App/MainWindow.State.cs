@@ -14,8 +14,8 @@ namespace LocalLlmConsole;
 
 public partial class MainWindow
 {
-    private const string AppDisplayName = "llama.cpp Console";
-    private const string AppVersionLabel = "v1.1";
+    private const string AppDisplayName = "llama.cpp Windows Manager";
+    private const string AppVersionLabel = "v1.1.2";
 
     private sealed record RuntimeUpdateCheck(bool IsInstalled, bool HasUpdate, string LocalCommit, string RemoteCommit);
     private sealed record RuntimeMetricDisplaySnapshot(
@@ -125,6 +125,7 @@ public partial class MainWindow
     private DataGrid? _runtimeBuildGrid;
     private DataGrid? _runtimeJobsGrid;
     private WpfButton? _runtimeAdvancedToggleButton;
+    private WpfComboBox? _runtimeCudaPreferenceCombo;
     private DataGrid? _windowsToolsGrid;
     private DataGrid? _wslDistroGrid;
     private DataGrid? _runtimeMetricsGrid;

@@ -97,7 +97,7 @@ These are broader product items already implied by the release docs:
 - Added running runtime build progress summaries from the latest meaningful build-log line.
 - Added terminal runtime build-job cleanup with safe job-record deletion and workspace-log deletion.
 - Tightened runtime build deletion so runtime files can only be deleted when the runtime is not active and not referenced by saved model launch settings.
-- Added an Inno Setup installer source and build wrapper with preferred `D:\LlamaCppConsole` installs, editable install location, launch-after-install, existing-install reuse, and uninstall data preservation by default.
+- Added an Inno Setup installer source and build wrapper with preferred `D:\LlamaCppWindowsManager` installs, editable install location, launch-after-install, existing-install reuse, and uninstall data preservation by default.
 - Added native Windows setup/tool detection, official prebuilt runtime downloads, advanced source-build hiding, Windows/WSL CUDA/Vulkan/SYCL package presets, source/prebuilt runtime equivalence, multi-model loaded sessions, stable per-model ports, and OpenCode provider separation per model endpoint.
 - Added Intel Arc/SYCL support for native Windows and WSL, including oneAPI setup/detection, WSL Intel GPU runtime packages, SYCL source-build arguments, SYCL launch environment, and Intel Arc runtime metric summaries.
 - Made `LocalAppService` resilient to bounded unexpected listener errors while keeping request-handler tasks observed during shutdown.

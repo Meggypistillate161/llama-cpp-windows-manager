@@ -1,4 +1,4 @@
-# llama.cpp Console
+# llama.cpp Windows Manager
 
 Windows-first desktop app for installing, configuring, and running local
 `llama.cpp` models with native Windows or Ubuntu/WSL runtimes.
@@ -6,7 +6,7 @@ Windows-first desktop app for installing, configuring, and running local
 This is an unofficial community project. It is not affiliated with, endorsed by,
 or maintained by the `llama.cpp` or `ggml-org` projects.
 
-![llama.cpp Console overview showing a loaded model, live token counters, GPU status, runtime logs, and llama.cpp metrics](docs/images/overview.png)
+![llama.cpp Windows Manager overview showing a loaded model, live token counters, GPU status, runtime logs, and llama.cpp metrics](docs/images/overview.png)
 
 ## What It Does
 
@@ -39,7 +39,7 @@ This app overlaps with other local-LLM tools, but it aims at a narrower Windows
 workflow: managing `llama.cpp` builds and `llama-server` launches on native
 Windows or inside Ubuntu/WSL without living in a terminal.
 
-| Tool | Primary focus | How llama.cpp Console differs |
+| Tool | Primary focus | How llama.cpp Windows Manager differs |
 | --- | --- | --- |
 | Ollama | Simple local model runner with CLI, app, model library, and local API. | Keeps you closer to raw `llama.cpp`/GGUF workflows: install official prebuilt CPU/CUDA/Vulkan/SYCL runtimes for Windows or WSL, keep custom source builds available, choose a runtime per model, and inspect logs/metrics directly. |
 | LM Studio | Polished desktop model browser, chat UI, and local OpenAI-compatible server. | Focuses less on chat UX and more on toolchain setup, source builds, runtime selection, launch profiles, and operational monitoring. |
@@ -87,7 +87,7 @@ are mainly for advanced source builds or troubleshooting missing toolchains.
 
 ## Runtime Compatibility
 
-`llama.cpp` Console is designed to let each model choose the runtime that fits
+llama.cpp Windows Manager is designed to let each model choose the runtime that fits
 your machine instead of forcing one global backend.
 
 | Target | Runtime choices | Normal path | Advanced path |
@@ -106,25 +106,29 @@ End users should receive a release artifact, not the source tree.
 Preferred artifact:
 
 ```text
-dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe
+dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe
 ```
 
-Portable artifact:
+Portable artifacts:
 
 ```text
-dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe
+dist\LlamaCppWindowsManager-win-x64.zip
+dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe
 ```
+
+The portable zip also includes a legacy `LlamaCppConsole.exe` alias so users on
+older portable builds can update cleanly into the renamed app.
 
 Fresh installer defaults:
 
-- `D:\LlamaCppConsole` when `D:` exists.
-- `%LocalAppData%\Programs\LlamaCppConsole` when `D:` is unavailable.
+- `D:\LlamaCppWindowsManager` when `D:` exists.
+- `%LocalAppData%\Programs\LlamaCppWindowsManager` when `D:` is unavailable.
 - Existing installs reuse the previous install directory.
 
 Portable runs create a workspace beside the executable when writable:
 
 ```text
-LlamaCppConsole.exe
+LlamaCppWindowsManager.exe
 data\
   models\
   runtimes\
@@ -134,9 +138,9 @@ data\
 ```
 
 If the executable folder is not writable, the app falls back to
-`%LocalAppData%\llama.cpp Console`. Override the workspace before launch with
-`LLAMA_CPP_CONSOLE_WORKSPACE`. The legacy `LOCAL_LLM_CONSOLE_WORKSPACE` variable
-is still accepted for pre-v1 test setups.
+`%LocalAppData%\llama.cpp Windows Manager`. Override the workspace before launch with
+`LLAMA_CPP_WINDOWS_MANAGER_WORKSPACE`. The legacy `LLAMA_CPP_CONSOLE_WORKSPACE`
+and `LOCAL_LLM_CONSOLE_WORKSPACE` variables are still accepted.
 
 ## Developer Prerequisites
 
@@ -155,10 +159,19 @@ is still accepted for pre-v1 test setups.
 If `dotnet` is not on `PATH`, point the scripts at an SDK explicitly:
 
 ```powershell
-$env:LLAMA_CPP_CONSOLE_DOTNET = "C:\Path\To\dotnet.exe"
+$env:LLAMA_CPP_WINDOWS_MANAGER_DOTNET = "C:\Path\To\dotnet.exe"
 ```
 
-The legacy `LOCAL_LLM_CONSOLE_DOTNET` variable is also accepted.
+The legacy `LLAMA_CPP_CONSOLE_DOTNET` and `LOCAL_LLM_CONSOLE_DOTNET` variables
+are also accepted.
+
+For Inno Setup, prefer:
+
+```powershell
+$env:LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP = "C:\Path\To\ISCC.exe"
+```
+
+The legacy `LLAMA_CPP_CONSOLE_INNO_SETUP` variable is also accepted.
 
 ## Build, Test, Publish
 
@@ -186,6 +199,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 The publish and installer scripts write `.sha256` companion files beside the
 generated binaries. The app updater requires a matching SHA-256 asset before
 staging an update.
+
+For v1.1.2 and newer, publish the `LlamaCppWindowsManager-win-x64.zip` archive
+and its `.sha256` file. The zip contains both the renamed executable and the
+legacy updater alias.
 
 Launch a published local build:
 
@@ -223,12 +240,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\clean-repo.ps1 -AllDis
   release-readiness checklist.
 
 The source namespace remains `LocalLlmConsole`; the product and published
-executable are `llama.cpp Console` and `LlamaCppConsole.exe`.
+executable are `llama.cpp Windows Manager` and `LlamaCppWindowsManager.exe`.
 
 ## Known Limitations
 
 - Installer builds require Inno Setup 6 locally or
-  `LLAMA_CPP_CONSOLE_INNO_SETUP`.
+  `LLAMA_CPP_WINDOWS_MANAGER_INNO_SETUP`.
 - Hardware coverage still needs validation across missing WSL, CPU-only,
   CUDA-visible, Vulkan-visible, Intel Arc/SYCL-visible, and unsupported-backend
   machines.

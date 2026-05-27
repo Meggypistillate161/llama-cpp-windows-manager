@@ -113,11 +113,11 @@ public static class RuntimePackageCatalogService
             assets);
     }
 
-    public static RuntimePackageSelection SelectAssets(RuntimePackagePreset preset, RuntimePackageRelease release)
+    public static RuntimePackageSelection SelectAssets(RuntimePackagePreset preset, RuntimePackageRelease release, string cudaPackagePreference = "latest")
         => preset.Id switch
         {
-            "official-prebuilt-windows-cuda" => SelectWindowsCudaAssets(preset, release),
-            "official-prebuilt-cuda" => SelectLinuxCudaAssets(preset, release),
+            "official-prebuilt-windows-cuda" => SelectWindowsCudaAssets(preset, release, cudaPackagePreference),
+            "official-prebuilt-cuda" => SelectLinuxCudaAssets(preset, release, cudaPackagePreference),
             "official-prebuilt-windows-vulkan" => SelectSingleAsset(preset, release, @"^llama-.+-bin-win-vulkan-x64\.zip$"),
             "official-prebuilt-vulkan" => SelectSingleAsset(preset, release, @"^llama-.+-bin-ubuntu-vulkan-x64\.tar\.gz$"),
             "official-prebuilt-windows-sycl" => SelectSingleAsset(preset, release, @"^llama-.+-bin-win-sycl-x64\.zip$"),
@@ -148,6 +148,24 @@ public static class RuntimePackageCatalogService
         => installed
             .Select(RuntimeMetadataService.PackageTag)
             .FirstOrDefault(tag => !string.IsNullOrWhiteSpace(tag)) ?? "";
+
+    public static string LatestInstalledAssetSummary(IReadOnlyList<RuntimeRecord> installed)
+        => installed
+            .Select(RuntimeMetadataService.PackageAssetSummary)
+            .FirstOrDefault(summary => !string.IsNullOrWhiteSpace(summary)) ?? "";
+
+    public static bool AssetSummariesMatch(string left, string right)
+    {
+        static string Normalize(string text)
+            => string.Join("|", (text ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+
+        var normalizedLeft = Normalize(left);
+        var normalizedRight = Normalize(right);
+        return !string.IsNullOrWhiteSpace(normalizedLeft)
+            && string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
 
     public static string LatestSourceCommit(IReadOnlyList<RuntimeRecord> sourceBuilds)
         => sourceBuilds
@@ -373,7 +391,7 @@ public static class RuntimePackageCatalogService
         return new RuntimePackageSelection(preset, release.TagName, release.HtmlUrl, release.PublishedAt, asset, []);
     }
 
-    private static RuntimePackageSelection SelectWindowsCudaAssets(RuntimePackagePreset preset, RuntimePackageRelease release)
+    private static RuntimePackageSelection SelectWindowsCudaAssets(RuntimePackagePreset preset, RuntimePackageRelease release, string cudaPackagePreference)
     {
         var binaries = release.Assets
             .Select(asset => new { Asset = asset, Version = MatchGroup(asset.Name, @"^llama-.+-bin-win-cuda-(?<version>[0-9.]+)-x64\.zip$", "version") })
@@ -384,7 +402,7 @@ public static class RuntimePackageCatalogService
             .Where(match => !string.IsNullOrWhiteSpace(match.Version))
             .ToDictionary(match => match.Version, match => match.Asset, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var candidate in binaries.OrderByDescending(match => CudaVersionPreference(match.Version)))
+        foreach (var candidate in binaries.OrderByDescending(match => CudaVersionPreference(match.Version, cudaPackagePreference)))
         {
             if (runtimeDlls.TryGetValue(candidate.Version, out var dllAsset))
                 return new RuntimePackageSelection(preset, release.TagName, release.HtmlUrl, release.PublishedAt, candidate.Asset, [dllAsset]);
@@ -393,7 +411,7 @@ public static class RuntimePackageCatalogService
         throw new InvalidOperationException($"Release {release.TagName} does not include matching CUDA binaries and runtime DLLs for Windows.");
     }
 
-    private static RuntimePackageSelection SelectLinuxCudaAssets(RuntimePackagePreset preset, RuntimePackageRelease release)
+    private static RuntimePackageSelection SelectLinuxCudaAssets(RuntimePackagePreset preset, RuntimePackageRelease release, string cudaPackagePreference)
     {
         var binaries = release.Assets
             .Select(asset => new
@@ -416,20 +434,23 @@ public static class RuntimePackageCatalogService
             .GroupBy(match => match.Version ?? "", StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Asset, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var candidate in binaries.OrderByDescending(match => CudaVersionPreference(match.Version)))
+        foreach (var candidate in binaries.OrderByDescending(match => CudaVersionPreference(match.Version, cudaPackagePreference)))
         {
             if (!string.IsNullOrWhiteSpace(candidate.Version) && runtimeDlls.TryGetValue(candidate.Version, out var dllAsset))
                 return new RuntimePackageSelection(preset, release.TagName, release.HtmlUrl, release.PublishedAt, candidate.Asset, [dllAsset]);
         }
 
-        var primary = binaries.OrderByDescending(match => CudaVersionPreference(match.Version)).First().Asset;
+        var primary = binaries.OrderByDescending(match => CudaVersionPreference(match.Version, cudaPackagePreference)).First().Asset;
         return new RuntimePackageSelection(preset, release.TagName, release.HtmlUrl, release.PublishedAt, primary, []);
     }
 
-    private static (int FamilyScore, Version Version) CudaVersionPreference(string value)
+    private static (int FamilyScore, Version Version) CudaVersionPreference(string value, string cudaPackagePreference)
     {
         var normalized = value.Trim();
-        var familyScore = normalized.StartsWith("12.", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+        var familyScore = AppPreferenceService.CudaPackagePreference(cudaPackagePreference) == "compatibility"
+            && normalized.StartsWith("12.", StringComparison.OrdinalIgnoreCase)
+                ? 2
+                : 1;
         return Version.TryParse(normalized, out var version)
             ? (familyScore, version)
             : (familyScore, new Version(0, 0));

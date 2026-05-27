@@ -66,7 +66,7 @@ public static class WindowsSetupCommands
             lines.Add($"  Start-Process {CommandLineService.PowerShellQuote(url)}");
         lines.Add("}");
         lines.Add("Write-Host ''");
-        lines.Add("Write-Host 'After installers finish, restart llama.cpp Console so PATH and toolchain environment variables are refreshed.'");
+        lines.Add("Write-Host 'After installers finish, restart llama.cpp Windows Manager so PATH and toolchain environment variables are refreshed.'");
         lines.Add("Read-Host 'Press Enter to close'");
         return string.Join(Environment.NewLine, lines);
     }
