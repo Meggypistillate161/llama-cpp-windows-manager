@@ -1,5 +1,3 @@
-# llama.cpp Console v1.1.0
-
 This release turns the app into a multi-runtime, multi-model `llama.cpp`
 console for Windows users. The normal path is now simple: install an official
 prebuilt runtime, choose Windows or WSL per model, and load one or more models
