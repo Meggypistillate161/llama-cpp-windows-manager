@@ -31,10 +31,24 @@ public partial class MainWindow
             return;
         }
         var host = AppPreferenceService.RuntimeHostForAccessMode(accessMode);
-        var port = AppPreferenceService.IntValue(V("port", _settings.Port.ToString()), _settings.Port);
+        if (!AppPreferenceService.TryIntValue(V("port", _settings.Port.ToString()), out var port))
+        {
+            SetStatus("Port must be a whole number.");
+            return;
+        }
         if (port is < 1 or > 65535)
         {
             SetStatus("Port must be between 1 and 65535.");
+            return;
+        }
+        if (!AppPreferenceService.TryIntValue(V("autoUnloadIdleMinutes", _settings.AutoUnloadIdleMinutes.ToString()), out var autoUnloadIdleMinutes))
+        {
+            SetStatus("Auto unload idle min must be a whole number.");
+            return;
+        }
+        if (!AppPreferenceService.TryIntValue(V("maxLogFileSizeMb", _settings.MaxLogFileSizeMb.ToString()), out var maxLogFileSizeMb))
+        {
+            SetStatus("Max log file MB must be a whole number.");
             return;
         }
         _settings = _settings with
@@ -42,13 +56,13 @@ public partial class MainWindow
             WorkspaceRoot = _workspaceRoot,
             ThemeMode = AppPreferenceService.ThemeMode(ComboValue(_themeCombo)),
             MinimizeBehavior = AppPreferenceService.MinimizeBehavior(V("minimizeBehavior", _settings.MinimizeBehavior)),
-            AutoUnloadIdleMinutes = AppPreferenceService.ClampedIntValue(V("autoUnloadIdleMinutes", _settings.AutoUnloadIdleMinutes.ToString()), _settings.AutoUnloadIdleMinutes, 0, 10080),
+            AutoUnloadIdleMinutes = Math.Clamp(autoUnloadIdleMinutes, 0, 10080),
             DeleteRuntimeSourceAfterSuccessfulBuild = AppPreferenceService.YesNoValue(V("deleteRuntimeSourceAfterSuccessfulBuild", AppPreferenceService.YesNoLabel(_settings.DeleteRuntimeSourceAfterSuccessfulBuild)), _settings.DeleteRuntimeSourceAfterSuccessfulBuild),
             ModelAccessMode = accessMode,
             Host = host,
             ModelApiKey = apiKey,
             Port = port,
-            MaxLogFileSizeMb = AppPreferenceService.ClampedIntValue(V("maxLogFileSizeMb", _settings.MaxLogFileSizeMb.ToString()), AppSettings.CreateDefault(_workspaceRoot).MaxLogFileSizeMb, 1, 4096)
+            MaxLogFileSizeMb = Math.Clamp(maxLogFileSizeMb, 1, 4096)
         };
         ApplyTheme(_settings.ThemeMode);
         ApplyLaunchSettingsToControls();

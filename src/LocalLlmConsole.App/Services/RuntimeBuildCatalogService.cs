@@ -1,9 +1,9 @@
 
 namespace LocalLlmConsole.Services;
 
-public sealed record RuntimeBuildPreset(string Id, string Label, string RepoUrl, string Branch, bool Cuda, bool Custom = false, string Backend = "");
+public sealed record RuntimeBuildPreset(string Id, string Label, string RepoUrl, string Branch, bool Cuda, bool Custom = false, string Backend = "", RuntimeMode Mode = RuntimeMode.Wsl);
 
-public sealed record RuntimeSourceEntry(string PresetId, string Label, string RepoUrl, string Branch, bool Cuda, string SourceDir, string Commit, DateTimeOffset DownloadedAt, string Backend = "");
+public sealed record RuntimeSourceEntry(string PresetId, string Label, string RepoUrl, string Branch, bool Cuda, string SourceDir, string Commit, DateTimeOffset DownloadedAt, string Backend = "", RuntimeMode Mode = RuntimeMode.Wsl);
 
 public sealed record RuntimeUpdateState(bool HasUpdate, string LocalCommit, string RemoteCommit, DateTimeOffset CheckedAt);
 
@@ -11,9 +11,14 @@ public static class RuntimeBuildCatalogService
 {
     public static readonly RuntimeBuildPreset[] DefaultPresets =
     [
-        new("official-cpu", "Official llama.cpp CPU", "https://github.com/ggml-org/llama.cpp.git", "master", false),
-        new("official-cuda", "Official llama.cpp CUDA", "https://github.com/ggml-org/llama.cpp.git", "master", true),
-        new("official-vulkan", "Official llama.cpp Vulkan", "https://github.com/ggml-org/llama.cpp.git", "master", false, Backend: "vulkan"),
+        new("official-windows-cuda", "Official llama.cpp CUDA Windows", "https://github.com/ggml-org/llama.cpp.git", "master", true, Mode: RuntimeMode.Native),
+        new("official-cuda", "Official llama.cpp CUDA WSL", "https://github.com/ggml-org/llama.cpp.git", "master", true),
+        new("official-windows-vulkan", "Official llama.cpp Vulkan Windows", "https://github.com/ggml-org/llama.cpp.git", "master", false, Backend: "vulkan", Mode: RuntimeMode.Native),
+        new("official-vulkan", "Official llama.cpp Vulkan WSL", "https://github.com/ggml-org/llama.cpp.git", "master", false, Backend: "vulkan"),
+        new("official-windows-sycl", "Official llama.cpp SYCL Windows (Intel Arc)", "https://github.com/ggml-org/llama.cpp.git", "master", false, Backend: "sycl", Mode: RuntimeMode.Native),
+        new("official-sycl", "Official llama.cpp SYCL WSL (Intel Arc)", "https://github.com/ggml-org/llama.cpp.git", "master", false, Backend: "sycl"),
+        new("official-windows-cpu", "Official llama.cpp CPU Windows", "https://github.com/ggml-org/llama.cpp.git", "master", false, Mode: RuntimeMode.Native),
+        new("official-cpu", "Official llama.cpp CPU WSL", "https://github.com/ggml-org/llama.cpp.git", "master", false),
         new("atomic-turboquant-cuda", "Atomic TurboQuant CUDA", "https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant.git", "", true),
         new("ik-llama-cuda", "ik_llama.cpp CUDA", "https://github.com/ikawrakow/ik_llama.cpp.git", "", true),
         new("thetom-turboquant-cuda", "TheTom TurboQuant CUDA", "https://github.com/TheTom/llama-cpp-turboquant.git", "", true)
@@ -36,8 +41,20 @@ public static class RuntimeBuildCatalogService
         var root = SourceRoot(runtimeRoot);
         if (!Directory.Exists(root)) yield break;
 
-        foreach (var metadataPath in Directory.EnumerateFiles(root, "local-llm-runtime-source.json", SearchOption.AllDirectories))
+        IEnumerable<string> sourceDirs;
+        try
         {
+            sourceDirs = Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly).ToArray();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var sourceDir in sourceDirs)
+        {
+            var metadataPath = SourceMetadataPath(sourceDir);
+            if (!File.Exists(metadataPath)) continue;
             var source = ReadSource(metadataPath);
             if (source is not null) yield return source;
         }
@@ -47,7 +64,12 @@ public static class RuntimeBuildCatalogService
     {
         try
         {
-            return JsonSerializer.Deserialize<RuntimeSourceEntry>(File.ReadAllText(metadataPath));
+            var text = File.ReadAllText(metadataPath);
+            var source = JsonSerializer.Deserialize<RuntimeSourceEntry>(text);
+            if (source is null) return null;
+            var node = JsonNode.Parse(text);
+            var mode = HasModeProperty(node) ? NormalizeBuildMode(source.Mode) : RuntimeMode.Wsl;
+            return source with { Mode = mode };
         }
         catch
         {
@@ -70,19 +92,45 @@ public static class RuntimeBuildCatalogService
 
         try
         {
-            return (JsonSerializer.Deserialize<List<RuntimeBuildPreset>>(File.ReadAllText(path)) ?? [])
-                .Where(preset => !string.IsNullOrWhiteSpace(preset.Label) && !string.IsNullOrWhiteSpace(preset.RepoUrl))
-                .Where(IsSafePreset)
-                .Select(preset =>
+            var text = File.ReadAllText(path);
+            var modeProperties = ReadModePropertyMap(text);
+            return (JsonSerializer.Deserialize<List<RuntimeBuildPreset>>(text) ?? [])
+                .Select((preset, index) => new { preset, index })
+                .Where(item => !string.IsNullOrWhiteSpace(item.preset.Label) && !string.IsNullOrWhiteSpace(item.preset.RepoUrl))
+                .Where(item => IsSafePreset(item.preset))
+                .Select(item =>
                 {
+                    var preset = item.preset;
                     var branch = preset.Branch?.Trim() ?? "";
+                    var mode = modeProperties.Contains(item.index) ? NormalizeBuildMode(preset.Mode) : RuntimeMode.Wsl;
                     var rawId = string.IsNullOrWhiteSpace(preset.Id)
-                        ? CustomPresetId(preset.Label, preset.RepoUrl, branch, BackendKey(preset))
+                        ? CustomPresetId(preset.Label, preset.RepoUrl, branch, BackendKey(preset), mode)
                         : preset.Id;
                     var id = ModelCatalogService.SafeId(rawId);
-                    return preset with { Id = id, Branch = branch, Custom = true, Backend = BackendKey(preset) };
+                    return preset with { Id = id, Branch = branch, Custom = true, Backend = BackendKey(preset), Mode = mode };
                 })
                 .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool HasModeProperty(JsonNode? node)
+        => node?["Mode"] is not null || node?["mode"] is not null;
+
+    private static HashSet<int> ReadModePropertyMap(string json)
+    {
+        try
+        {
+            var array = JsonNode.Parse(json) as JsonArray;
+            if (array is null) return [];
+            return array
+                .Select((node, index) => new { node, index })
+                .Where(item => HasModeProperty(item.node))
+                .Select(item => item.index)
+                .ToHashSet();
         }
         catch
         {
@@ -180,17 +228,13 @@ public static class RuntimeBuildCatalogService
         => CustomPresetId(label, repoUrl, branch, cuda ? "cuda" : "cpu");
 
     public static string CustomPresetId(string label, string repoUrl, string branch, string backend)
-    {
-        var backendKey = NormalizeBuildBackend(backend);
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{repoUrl}|{branch}|{backendKey}".ToLowerInvariant()));
-        var hash = Convert.ToHexString(bytes)[..8].ToLowerInvariant();
-        return ModelCatalogService.SafeId($"custom-{label}-{backendKey}-{hash}");
-    }
+        => CustomPresetId(label, repoUrl, branch, backend, RuntimeMode.Wsl);
 
     public static bool SameRepository(RuntimeBuildPreset left, RuntimeBuildPreset right)
         => string.Equals(NormalizeRepositoryText(left.RepoUrl), NormalizeRepositoryText(right.RepoUrl), StringComparison.OrdinalIgnoreCase)
             && string.Equals(left.Branch?.Trim() ?? "", right.Branch?.Trim() ?? "", StringComparison.OrdinalIgnoreCase)
-            && BuildBackend(left) == BuildBackend(right);
+            && BuildBackend(left) == BuildBackend(right)
+            && NormalizeBuildMode(left.Mode) == NormalizeBuildMode(right.Mode);
 
     public static RuntimeBackend BuildBackend(RuntimeBuildPreset preset)
         => ParseBuildBackend(preset.Backend, preset.Cuda);
@@ -205,30 +249,43 @@ public static class RuntimeBuildCatalogService
     {
         RuntimeBackend.Cuda => "cuda",
         RuntimeBackend.Vulkan => "vulkan",
+        RuntimeBackend.Sycl => "sycl",
         _ => "cpu"
     };
 
+    public static RuntimeMode BuildMode(RuntimeBuildPreset preset) => NormalizeBuildMode(preset.Mode);
+
+    public static RuntimeMode BuildMode(RuntimeSourceEntry source) => NormalizeBuildMode(source.Mode);
+
+    public static RuntimeMode NormalizeBuildMode(RuntimeMode mode)
+        => mode == RuntimeMode.Native ? RuntimeMode.Native : RuntimeMode.Wsl;
+
+    public static string ModeKey(RuntimeMode mode)
+        => NormalizeBuildMode(mode) == RuntimeMode.Native ? "native" : "wsl";
+
+    public static string ModeLabel(RuntimeMode mode)
+        => NormalizeBuildMode(mode) == RuntimeMode.Native ? "Windows" : "WSL";
+
     public static string BackendLabel(RuntimeBuildPreset preset)
-        => BuildBackend(preset) switch
-        {
-            RuntimeBackend.Cuda => "CUDA WSL",
-            RuntimeBackend.Vulkan => "Vulkan WSL",
-            _ => "CPU WSL"
-        };
+        => $"{BackendName(BuildBackend(preset))} {ModeLabel(preset.Mode)}";
 
     public static string BackendLabel(RuntimeSourceEntry source)
-        => BuildBackend(source) switch
-        {
-            RuntimeBackend.Cuda => "CUDA",
-            RuntimeBackend.Vulkan => "Vulkan",
-            _ => "CPU"
-        };
+        => $"{BackendName(BuildBackend(source))} {ModeLabel(source.Mode)}";
+
+    private static string BackendName(RuntimeBackend backend) => backend switch
+    {
+        RuntimeBackend.Cuda => "CUDA",
+        RuntimeBackend.Vulkan => "Vulkan",
+        RuntimeBackend.Sycl => "SYCL",
+        _ => "CPU"
+    };
 
     public static string NormalizeBuildBackend(string backend)
         => (backend ?? "").Trim().ToLowerInvariant() switch
         {
             "cuda" => "cuda",
             "vulkan" => "vulkan",
+            "sycl" => "sycl",
             _ => "cpu"
         };
 
@@ -237,6 +294,7 @@ public static class RuntimeBuildCatalogService
         {
             "cuda" => RuntimeBackend.Cuda,
             "vulkan" => RuntimeBackend.Vulkan,
+            "sycl" => RuntimeBackend.Sycl,
             _ when cuda => RuntimeBackend.Cuda,
             _ => RuntimeBackend.Cpu
         };
@@ -280,5 +338,18 @@ public static class RuntimeBuildCatalogService
         if (value.StartsWith("-", StringComparison.Ordinal)) return false;
         if (value.Contains("..", StringComparison.Ordinal) || value.EndsWith(".", StringComparison.Ordinal)) return false;
         return value.All(ch => !char.IsControl(ch) && ch is not ' ' and not '~' and not '^' and not ':' and not '?' and not '*' and not '[' and not '\\');
+    }
+
+    public static string CustomPresetId(string label, string repoUrl, string branch, string backend, RuntimeMode mode)
+    {
+        var backendKey = NormalizeBuildBackend(backend);
+        var modeKey = ModeKey(mode);
+        var idBackend = modeKey == "native" ? $"windows-{backendKey}" : backendKey;
+        var hashInput = modeKey == "native"
+            ? $"{repoUrl}|{branch}|{backendKey}|{modeKey}"
+            : $"{repoUrl}|{branch}|{backendKey}";
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(hashInput.ToLowerInvariant()));
+        var hash = Convert.ToHexString(bytes)[..8].ToLowerInvariant();
+        return ModelCatalogService.SafeId($"custom-{label}-{idBackend}-{hash}");
     }
 }

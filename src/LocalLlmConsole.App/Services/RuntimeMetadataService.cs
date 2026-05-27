@@ -3,6 +3,91 @@ namespace LocalLlmConsole.Services;
 
 public static class RuntimeMetadataService
 {
+    public static string ManagedPackageId(RuntimeRecord runtime)
+    {
+        try
+        {
+            var metadata = JsonNode.Parse(runtime.MetadataJson);
+            return metadata?["managedPackageId"]?.ToString()
+                ?? metadata?["runtimeMetadata"]?["managedPackageId"]?.ToString()
+                ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    public static string PackageTag(RuntimeRecord runtime)
+    {
+        try
+        {
+            var metadata = JsonNode.Parse(runtime.MetadataJson);
+            var tag = metadata?["releaseTag"]?.ToString()
+                ?? metadata?["runtimeMetadata"]?["releaseTag"]?.ToString()
+                ?? "";
+            if (!string.IsNullOrWhiteSpace(tag)) return tag;
+        }
+        catch
+        {
+            // Try packaged metadata below.
+        }
+
+        try
+        {
+            var metadataPath = Path.Combine(Folder(runtime), "local-llm-runtime.json");
+            if (File.Exists(metadataPath))
+            {
+                var tag = JsonNode.Parse(File.ReadAllText(metadataPath))?["releaseTag"]?.ToString() ?? "";
+                if (!string.IsNullOrWhiteSpace(tag)) return tag;
+            }
+        }
+        catch
+        {
+            // No package metadata is available.
+        }
+
+        return "";
+    }
+
+    public static string RuntimeFingerprint(RuntimeRecord runtime)
+    {
+        try
+        {
+            var metadata = JsonNode.Parse(runtime.MetadataJson);
+            var fingerprint = metadata?["runtimeFingerprint"]?.ToString()
+                ?? metadata?["runtimeMetadata"]?["runtimeFingerprint"]?.ToString()
+                ?? "";
+            if (!string.IsNullOrWhiteSpace(fingerprint)) return fingerprint;
+        }
+        catch
+        {
+            // Try packaged metadata below.
+        }
+
+        try
+        {
+            var metadataPath = Path.Combine(Folder(runtime), "local-llm-runtime.json");
+            if (File.Exists(metadataPath))
+            {
+                var fingerprint = JsonNode.Parse(File.ReadAllText(metadataPath))?["runtimeFingerprint"]?.ToString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fingerprint)) return fingerprint;
+            }
+        }
+        catch
+        {
+            // No fingerprint metadata is available.
+        }
+
+        return "";
+    }
+
+    public static IReadOnlyList<string> EquivalentPackageIds(RuntimeRecord runtime)
+        => ReadStringArray(runtime, "equivalentPackageIds");
+
+    public static IReadOnlyList<string> EquivalentSourcePresetIds(RuntimeRecord runtime)
+        => ReadStringArray(runtime, "equivalentSourcePresetIds");
+
     public static string ManagedPresetId(RuntimeRecord runtime)
     {
         try
@@ -24,6 +109,8 @@ public static class RuntimeMetadataService
                 metadata?["runtimeMetadata"]?["sourcePath"]?.ToString() ?? "",
                 metadata?["runtimeMetadata"]?["build"]?.ToString() ?? "",
                 metadata?["runtimeMetadata"]?["name"]?.ToString() ?? "",
+                metadata?["runtimeMetadata"]?["source"]?.ToString() ?? "",
+                metadata?["runtimeMetadata"]?["releaseTag"]?.ToString() ?? "",
                 PackagedMetadataText(Folder(runtime))
             }).Replace('\\', '/');
 
@@ -40,9 +127,13 @@ public static class RuntimeMetadataService
                 || text.Contains("ggerganov/llama.cpp", StringComparison.OrdinalIgnoreCase)
                 || text.Contains("llama.cpp", StringComparison.OrdinalIgnoreCase))
             {
-                if (runtime.Backend == RuntimeBackend.Cuda || text.Contains("cuda", StringComparison.OrdinalIgnoreCase)) return "official-cuda";
-                if (runtime.Backend == RuntimeBackend.Vulkan || text.Contains("vulkan", StringComparison.OrdinalIgnoreCase)) return "official-vulkan";
-                return "official-cpu";
+                var isNative = runtime.Mode == RuntimeMode.Native
+                    || text.Contains(" native", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("runtime-native", StringComparison.OrdinalIgnoreCase);
+                if (runtime.Backend == RuntimeBackend.Sycl || text.Contains("sycl", StringComparison.OrdinalIgnoreCase)) return isNative ? "official-windows-sycl" : "official-sycl";
+                if (runtime.Backend == RuntimeBackend.Cuda || text.Contains("cuda", StringComparison.OrdinalIgnoreCase)) return isNative ? "official-windows-cuda" : "official-cuda";
+                if (runtime.Backend == RuntimeBackend.Vulkan || text.Contains("vulkan", StringComparison.OrdinalIgnoreCase)) return isNative ? "official-windows-vulkan" : "official-vulkan";
+                return isNative ? "official-windows-cpu" : "official-cpu";
             }
 
             return "";
@@ -116,7 +207,11 @@ public static class RuntimeMetadataService
                 metadata?["repoUrl"]?.ToString() ?? "",
                 metadata?["sourcePath"]?.ToString() ?? "",
                 metadata?["build"]?.ToString() ?? "",
-                metadata?["name"]?.ToString() ?? ""
+                metadata?["name"]?.ToString() ?? "",
+                metadata?["source"]?.ToString() ?? "",
+                metadata?["releaseTag"]?.ToString() ?? "",
+                metadata?["managedPackageId"]?.ToString() ?? "",
+                metadata?["runtimeFingerprint"]?.ToString() ?? ""
             });
         }
         catch
@@ -170,5 +265,49 @@ public static class RuntimeMetadataService
     {
         if (!Path.GetFileName(folder).Equals("bin", StringComparison.OrdinalIgnoreCase)) return folder;
         return Path.GetDirectoryName(folder) ?? folder;
+    }
+
+    private static IReadOnlyList<string> ReadStringArray(RuntimeRecord runtime, string propertyName)
+    {
+        try
+        {
+            var metadata = JsonNode.Parse(runtime.MetadataJson);
+            var direct = ReadArray(metadata?[propertyName]);
+            if (direct.Count > 0) return direct;
+            var packaged = ReadArray(metadata?["runtimeMetadata"]?[propertyName]);
+            if (packaged.Count > 0) return packaged;
+        }
+        catch
+        {
+            // Try packaged metadata below.
+        }
+
+        try
+        {
+            var metadataPath = Path.Combine(Folder(runtime), "local-llm-runtime.json");
+            if (File.Exists(metadataPath))
+                return ReadArray(JsonNode.Parse(File.ReadAllText(metadataPath))?[propertyName]);
+        }
+        catch
+        {
+            // No aliases are available.
+        }
+
+        return [];
+    }
+
+    private static IReadOnlyList<string> ReadArray(JsonNode? node)
+    {
+        if (node is JsonArray array)
+        {
+            return array
+                .Select(item => item?.ToString() ?? "")
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        var value = node?.ToString() ?? "";
+        return string.IsNullOrWhiteSpace(value) ? [] : [value];
     }
 }

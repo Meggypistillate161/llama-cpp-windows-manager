@@ -18,8 +18,12 @@ public partial class MainWindow
     {
         if (runtime.Mode == RuntimeMode.Wsl)
             await EnsureWslDistroReadyAsync(launchSettings.WslDistro);
+        if (runtime.Mode == RuntimeMode.Wsl && runtime.Backend == RuntimeBackend.Sycl)
+            await EnsureWslSyclToolsReadyAsync(launchSettings.WslDistro);
+        if (runtime.Mode == RuntimeMode.Native && runtime.Backend == RuntimeBackend.Sycl)
+            EnsureWindowsSyclToolsReady();
 
-        if (!_llama.IsRunning && await IsRuntimePortOccupiedAsync(launchSettings))
+        if (await IsRuntimePortOccupiedAsync(launchSettings))
             throw new InvalidOperationException($"Port {launchSettings.Port} is already in use. Stop the existing process or choose a different model port before launching llama.cpp.");
     }
 
@@ -56,6 +60,65 @@ public partial class MainWindow
         var detail = CommandLineService.FirstNonBlankLine(result.Error);
         if (string.IsNullOrWhiteSpace(detail)) detail = CommandLineService.FirstNonBlankLine(result.Output);
         throw new InvalidOperationException(WslEnvironmentService.VulkanToolsIncompleteMessage(distroName, detail));
+    }
+
+    private async Task EnsureWslSyclToolsReadyAsync(string distroName)
+    {
+        var result = await RunWslPreflightAsync(distroName, WslSetupCommands.SyclToolsPreflightCommand);
+        if (result.ExitCode == 0) return;
+
+        var detail = CommandLineService.FirstNonBlankLine(result.Error);
+        if (string.IsNullOrWhiteSpace(detail)) detail = CommandLineService.FirstNonBlankLine(result.Output);
+        throw new InvalidOperationException(WslEnvironmentService.SyclToolsIncompleteMessage(distroName, detail));
+    }
+
+    private void EnsureWindowsBuildToolsReady(RuntimeBackend backend)
+    {
+        var tools = _windowsEnvironment.Detect();
+        if (!tools.CpuToolsInstalled)
+            throw new InvalidOperationException($"Windows CPU build tools are not ready. Open Windows and install CPU Tools first.{Environment.NewLine}{WindowsEnvironmentService.CpuDetails(tools)}");
+        if (backend == RuntimeBackend.Cuda && !tools.CudaToolsInstalled)
+            throw new InvalidOperationException($"Windows CUDA Toolkit is not ready. Open Windows and install CUDA first.{Environment.NewLine}{tools.CudaDetails}");
+        if (backend == RuntimeBackend.Vulkan && !tools.VulkanToolsInstalled)
+            throw new InvalidOperationException($"Windows Vulkan SDK is not ready. Open Windows and install Vulkan first.{Environment.NewLine}{tools.VulkanDetails}");
+        if (backend == RuntimeBackend.Sycl && !tools.SyclToolsInstalled)
+            throw new InvalidOperationException($"Windows Intel oneAPI/SYCL tools are not ready. Open Windows and install oneAPI first.{Environment.NewLine}{tools.SyclDetails}");
+    }
+
+    private void EnsureWindowsSyclToolsReady()
+    {
+        var tools = _windowsEnvironment.Detect();
+        if (!tools.SyclToolsInstalled)
+            throw new InvalidOperationException($"Windows Intel oneAPI/SYCL tools are not ready. Open Windows and install oneAPI first.{Environment.NewLine}{tools.SyclDetails}");
+    }
+
+    private async Task<bool> ConfirmVramAdmissionAsync(RuntimeRecord runtime, ModelRecord model, AppSettings launchSettings)
+    {
+        if (!_sessions.HasRunningSessions) return true;
+        if (runtime.Backend is not (RuntimeBackend.Cuda or RuntimeBackend.Vulkan or RuntimeBackend.Sycl)) return true;
+
+        var memory = runtime.Backend == RuntimeBackend.Cuda
+            ? await GpuStatusService.MemoryAsync()
+            : null;
+        var result = _vramAdmission.Assess(model, runtime, launchSettings, memory);
+        if (result.Decision == VramAdmissionDecision.Allow) return true;
+        if (result.Decision == VramAdmissionDecision.Block)
+        {
+            ThemedMessageBox.Show(
+                this,
+                $"{result.Message}\n\nUnload another model or reduce GPU layers/context before loading {model.Name}.",
+                "VRAM check",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+
+        return ThemedMessageBox.Show(
+            this,
+            $"{result.Message}\n\nLoad {model.Name} anyway? Existing loaded models will keep serving on their own ports.",
+            "VRAM check",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
     }
 
     private async Task<ProcessRunResult> RunWslPreflightAsync(string distroName, string script)

@@ -27,15 +27,52 @@ public sealed partial class HuggingFaceService
         if (!string.IsNullOrWhiteSpace(verificationError))
             throw new InvalidOperationException(verificationError);
 
-        var completedBytes = expectedBytes > 0 ? expectedBytes : finalBytes;
-        var projector = await TryDownloadVisionProjectorAsync(settings, file, destination, cancellationToken);
-        await RegisterDownloadedHuggingFaceModelAsync(settings, file, destination, DateTimeOffset.UtcNow, recovered: false, projector);
-        await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes, projector.Error), JsonOptions), cancellationToken);
+        await CompleteVerifiedPrimaryModelAsync(job, settings, file, destination, expectedBytes > 0 ? expectedBytes : finalBytes, DateTimeOffset.UtcNow, recovered: false, cancellationToken);
     }
 
-    private async Task RegisterDownloadedHuggingFaceModelAsync(AppSettings settings, HuggingFaceFile file, string destination, DateTimeOffset timestamp, bool recovered, VisionProjectorDownloadResult projector)
+    private async Task CompleteVerifiedPrimaryModelAsync(
+        JobRecord job,
+        AppSettings settings,
+        HuggingFaceFile file,
+        string destination,
+        long completedBytes,
+        DateTimeOffset timestamp,
+        bool recovered,
+        CancellationToken cancellationToken)
     {
-        var suggestedProfile = await TryGetSuggestedLaunchProfileAsync(settings, file, CancellationToken.None);
+        await RegisterDownloadedHuggingFaceModelAsync(settings, file, destination, timestamp, recovered, new VisionProjectorDownloadResult("", ""));
+        await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes), JsonOptions), cancellationToken);
+
+        try
+        {
+            var projector = await TryDownloadVisionProjectorAsync(settings, file, destination, cancellationToken);
+            var suggestedProfile = await TryGetSuggestedLaunchProfileAsync(settings, file, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(projector.LocalPath) || !string.IsNullOrWhiteSpace(projector.Error) || suggestedProfile is not null)
+            {
+                await RegisterDownloadedHuggingFaceModelAsync(settings, file, destination, timestamp, recovered, projector, suggestedProfile);
+                if (!string.IsNullOrWhiteSpace(projector.Error))
+                    await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes, projector.Error), JsonOptions), CancellationToken.None);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The primary model is already registered and complete; app shutdown can skip optional enrichment safely.
+        }
+        catch (Exception ex)
+        {
+            await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes, $"Optional post-download setup skipped: {ex.Message}"), JsonOptions), CancellationToken.None);
+        }
+    }
+
+    private async Task<ModelRecord> RegisterDownloadedHuggingFaceModelAsync(
+        AppSettings settings,
+        HuggingFaceFile file,
+        string destination,
+        DateTimeOffset timestamp,
+        bool recovered,
+        VisionProjectorDownloadResult projector,
+        SuggestedLaunchProfile? suggestedProfile = null)
+    {
         var record = await _catalog.RegisterDownloadedAsync(settings.ModelsRoot, file.Name, destination, JsonSerializer.Serialize(new
         {
             file.Repo,
@@ -68,6 +105,8 @@ public sealed partial class HuggingFaceService
 
         if (suggestedProfile is not null && await _store.GetModelLaunchSettingsAsync(record.Id) is null)
             await _store.SaveModelLaunchSettingsAsync(record.Id, suggestedProfile.Settings);
+
+        return record;
     }
 
     private static void TryDelete(string path)

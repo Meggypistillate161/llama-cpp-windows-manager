@@ -20,10 +20,10 @@ public partial class MainWindow
         _runtimeMetricsGrid?.Items.Refresh();
     }
 
-    private void PopulateRuntimeMetricRowsOrLastKnown(string error)
+    private void PopulateRuntimeMetricRowsOrLastKnown(string error, string runtimeKey)
     {
         if (_lastRuntimeMetricDisplay is { Samples.Count: > 0 } snapshot
-            && string.Equals(snapshot.RuntimeKey, CurrentRuntimeMetricKey(_activeRuntimeSettings ?? _settings), StringComparison.Ordinal))
+            && string.Equals(snapshot.RuntimeKey, runtimeKey, StringComparison.Ordinal))
         {
             _viewModel.RuntimeMetrics.ReplaceSamples(snapshot.Samples);
             _viewModel.RuntimeMetrics.Rows.Insert(0, new UiRow
@@ -41,9 +41,8 @@ public partial class MainWindow
         PopulateRuntimeMetricRows([new PrometheusSample("metrics_error", "", double.NaN, error, "error", "llama.cpp has not returned metrics yet.")]);
     }
 
-    private async Task ApplyRuntimeMetricSummaryAsync(IReadOnlyList<PrometheusSample> samples, AppSettings metricsSettings, RuntimeSlotSnapshot? slotSnapshot)
+    private Task ApplyRuntimeMetricSummaryAsync(IReadOnlyList<PrometheusSample> samples, AppSettings metricsSettings, RuntimeSlotSnapshot? slotSnapshot, string runtimeKey)
     {
-        var runtimeKey = CurrentRuntimeMetricKey(metricsSettings);
         if (!string.Equals(runtimeKey, _lastMetricRuntimeKey, StringComparison.Ordinal))
         {
             ResetMetricCounters();
@@ -51,15 +50,13 @@ public partial class MainWindow
         }
 
         if (samples.Count == 0 && slotSnapshot is null && ApplyLastKnownRuntimeMetricSummary(runtimeKey))
-            return;
+            return Task.CompletedTask;
 
-        var predictedTokens = RuntimeMetrics.Sum(samples, ["tokens", "predicted", "total"], ["seconds", "duration"])
-            ?? RuntimeMetrics.Sum(samples, ["tokens", "generated", "total"], ["seconds", "duration"])
-            ?? RuntimeMetrics.Sum(samples, ["tokens", "eval", "total"], ["seconds", "duration"]);
+        var predictedTokens = RuntimeGeneratedTokenCounter(samples);
         var predictedSeconds = RuntimeMetrics.Sum(samples, ["tokens", "predicted", "seconds", "total"], [])
             ?? RuntimeMetrics.Sum(samples, ["tokens", "generated", "seconds", "total"], [])
             ?? RuntimeMetrics.Sum(samples, ["eval", "time"], ["prompt"]);
-        var promptTokens = RuntimeMetrics.Sum(samples, ["prompt", "tokens", "total"], ["seconds", "duration"]);
+        var promptTokens = RuntimePromptTokenCounter(samples);
         var promptSeconds = RuntimeMetrics.Sum(samples, ["prompt", "seconds", "total"], [])
             ?? RuntimeMetrics.Sum(samples, ["prompt", "time"], []);
 
@@ -73,8 +70,6 @@ public partial class MainWindow
         var (slotPromptRate, slotGenerationRate) = SlotLiveRates(slotSnapshot, now, runtimeKey);
         liveGenerationRate = slotGenerationRate ?? liveGenerationRate;
         livePromptRate = slotPromptRate ?? livePromptRate;
-        await TrackLifetimeTokenDeltasAsync(runtimeKey, predictedTokens, promptTokens);
-        await ApplyIdleUnloadPolicyAsync(runtimeKey, slotSnapshot, predictedTokens, promptTokens);
 
         var averageGenerationRate = RuntimeMetrics.First(samples, ["predicted", "tokens", "seconds"], ["total"])
             ?? RuntimeMetrics.First(samples, ["generation", "tokens", "seconds"], ["total"])
@@ -101,10 +96,24 @@ public partial class MainWindow
         SetMetricText(_runtimeDashboardTotalTokens, totalTokensText);
         SetMetricText(_runtimeDashboardRequests, settingsText);
         RememberRuntimeMetricDisplay(runtimeKey, samples, generationRateText, totalTokensText, settingsText, displayGeneratedTokens, displayPromptTokens);
+        return Task.CompletedTask;
     }
 
+    private static double? RuntimeGeneratedTokenCounter(IReadOnlyList<PrometheusSample> samples)
+        => RuntimeMetrics.Sum(samples, ["tokens", "predicted", "total"], ["seconds", "duration"])
+           ?? RuntimeMetrics.Sum(samples, ["tokens", "generated", "total"], ["seconds", "duration"])
+           ?? RuntimeMetrics.Sum(samples, ["tokens", "eval", "total"], ["seconds", "duration"]);
+
+    private static double? RuntimePromptTokenCounter(IReadOnlyList<PrometheusSample> samples)
+        => RuntimeMetrics.Sum(samples, ["prompt", "tokens", "total"], ["seconds", "duration"]);
+
+    private static string RuntimeMetricKey(LoadedModelSessionSnapshot session)
+        => $"{session.ModelId}|{session.RuntimeId}|{session.LaunchSettings.Port}";
+
     private string CurrentRuntimeMetricKey(AppSettings metricsSettings)
-        => $"{_llama.ActiveModelId}|{_llama.ActiveRuntimeId}|{metricsSettings.Port}";
+        => _sessions.SelectedSnapshot() is { } selected
+            ? RuntimeMetricKey(selected)
+            : $"{_llama.ActiveModelId}|{_llama.ActiveRuntimeId}|{metricsSettings.Port}";
 
     private bool ApplyLastKnownRuntimeMetricSummary(string runtimeKey)
     {
@@ -160,10 +169,13 @@ public partial class MainWindow
     }
 
     private void UpdateRuntimeModelProgress()
+        => SetRuntimeModelProgress(_llama.State);
+
+    private void SetRuntimeModelProgress(LlamaRuntimeState state)
     {
         if (_runtimeDashboardModelProgress is null) return;
 
-        switch (_llama.State)
+        switch (state)
         {
             case LlamaRuntimeState.Loading:
                 _runtimeDashboardModelProgress.Visibility = Visibility.Visible;
@@ -196,7 +208,12 @@ public partial class MainWindow
         if (now - _cachedGpuSummaryAt < TimeSpan.FromSeconds(10))
             return _cachedGpuSummary;
 
-        _cachedGpuSummary = await GpuStatusService.SummaryAsync();
+        var active = _sessions.SelectedSnapshot();
+        _cachedGpuSummary = active?.Backend == RuntimeBackend.Sycl
+            ? active.Mode == RuntimeMode.Wsl
+                ? await GpuStatusService.WslIntelArcSummaryAsync(HostExecutableResolver.WslExe(), active.LaunchSettings.WslDistro)
+                : await GpuStatusService.WindowsIntelArcSummaryAsync()
+            : await GpuStatusService.SummaryAsync();
         _cachedGpuSummaryAt = DateTimeOffset.UtcNow;
         return _cachedGpuSummary;
     }

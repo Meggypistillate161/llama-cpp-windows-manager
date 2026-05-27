@@ -24,7 +24,9 @@ public sealed record WslToolSnapshot(
     bool VulkanToolsInstalled,
     string CpuSummary,
     string CudaSummary,
-    string VulkanSummary);
+    string VulkanSummary,
+    bool SyclToolsInstalled = false,
+    string SyclSummary = "SYCL unknown");
 
 public sealed class WslEnvironmentService
 {
@@ -134,7 +136,7 @@ public sealed class WslEnvironmentService
     }
 
     public static WslToolSnapshot UnknownToolSnapshot()
-        => new(false, false, false, "CPU tools unknown", "CUDA unknown", "Vulkan unknown");
+        => new(false, false, false, "CPU tools unknown", "CUDA unknown", "Vulkan unknown", false, "SYCL unknown");
 
     public static WslToolSnapshot ParseToolProbeOutput(string output)
     {
@@ -142,16 +144,19 @@ public sealed class WslEnvironmentService
         var cpu = values.TryGetValue("CPU", out var cpuValue) && cpuValue == "1";
         var cuda = values.TryGetValue("CUDA", out var cudaValue) && cudaValue == "1";
         var vulkan = values.TryGetValue("VULKAN", out var vulkanValue) && vulkanValue == "1";
+        var sycl = values.TryGetValue("SYCL", out var syclValue) && syclValue == "1";
         return new WslToolSnapshot(
             cpu,
             cuda,
             vulkan,
             values.GetValueOrDefault("CPU_SUMMARY", cpu ? "CPU OK" : "CPU missing"),
             values.GetValueOrDefault("CUDA_SUMMARY", cuda ? "CUDA OK" : "CUDA missing"),
-            values.GetValueOrDefault("VULKAN_SUMMARY", vulkan ? "Vulkan OK" : "Vulkan missing"));
+            values.GetValueOrDefault("VULKAN_SUMMARY", vulkan ? "Vulkan OK" : "Vulkan missing"),
+            sycl,
+            values.GetValueOrDefault("SYCL_SUMMARY", sycl ? "SYCL OK" : "SYCL missing"));
     }
 
-    public static string ToolSummary(WslToolSnapshot tools) => $"{tools.CpuSummary} | {tools.CudaSummary} | {tools.VulkanSummary}";
+    public static string ToolSummary(WslToolSnapshot tools) => $"{tools.CpuSummary} | {tools.CudaSummary} | {tools.VulkanSummary} | {tools.SyclSummary}";
 
     public static string CpuToolsActionLabel(WslToolSnapshot tools)
         => tools.CpuToolsInstalled ? "Update CPU Tools" : "Install CPU Tools";
@@ -161,6 +166,9 @@ public sealed class WslEnvironmentService
 
     public static string VulkanToolsActionLabel(WslToolSnapshot tools)
         => tools.VulkanToolsInstalled ? "Update Vulkan" : "Install Vulkan";
+
+    public static string SyclToolsActionLabel(WslToolSnapshot tools)
+        => tools.SyclToolsInstalled ? "Update oneAPI" : "Install oneAPI";
 
     public static bool LooksLikeWslNotInstalled(string text)
     {
@@ -182,6 +190,12 @@ public sealed class WslEnvironmentService
     {
         var suffix = string.IsNullOrWhiteSpace(detail) ? "" : $"{Environment.NewLine}{Environment.NewLine}{detail}";
         return $"Vulkan build tools were not ready inside WSL distro '{distroName}'. Use WSL Linux > Install Vulkan, or install Ubuntu packages libvulkan-dev, glslc, spirv-headers, vulkan-tools, and a usable Vulkan driver/device inside WSL, then retry.{suffix}";
+    }
+
+    public static string SyclToolsIncompleteMessage(string distroName, string detail)
+    {
+        var suffix = string.IsNullOrWhiteSpace(detail) ? "" : $"{Environment.NewLine}{Environment.NewLine}{detail}";
+        return $"Intel oneAPI/SYCL tools were not ready inside WSL distro '{distroName}'. Use WSL Linux > Install Intel GPU Runtime and Install oneAPI, or install Intel Level Zero GPU runtime packages plus Intel oneAPI DPC++/MKL/DNNL packages manually, then retry.{suffix}";
     }
 
     public static string SelectedUbuntuDistroName(WslEnvironmentReport report, string configuredDistro)
@@ -296,7 +310,7 @@ public sealed class WslEnvironmentService
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch {}
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
                 return (-1, "", "Timed out while checking WSL.");
             }
             return (process.ExitCode, CleanOutput(await outputTask), CleanOutput(await errorTask));

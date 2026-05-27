@@ -40,7 +40,7 @@ public partial class MainWindow
 
     private async Task DeleteModelAsync(ModelRecord model)
     {
-        if (IsModelActive(model)) { SetStatus("Unload the selected model before deleting it."); return; }
+        if (IsModelLoaded(model)) { SetStatus("Unload the selected model before deleting it."); return; }
         var action = model.Ownership == OwnershipKind.AppOwned ? "delete the downloaded model files" : "remove the model registration only";
         if (ThemedMessageBox.Show(this, $"This will {action} for:\n\n{model.Name}", "Remove model", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         await RunAsync("Removing model...", async () =>

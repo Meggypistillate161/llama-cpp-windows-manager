@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;

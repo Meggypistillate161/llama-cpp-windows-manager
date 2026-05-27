@@ -23,7 +23,7 @@ public partial class MainWindow
 
         if (Directory.Exists(sourceDir))
         {
-            if (await IsValidGitWorkTreeAsync(sourceDir, logPath))
+            if (await TryPrepareExistingRuntimeSourceAsync(sourceDir, logPath))
             {
                 await RunGitCommandAsync(sourceDir, logPath, MaxLogBytes(), "fetch", "--all", "--tags");
                 if (!string.IsNullOrWhiteSpace(preset.Branch))
@@ -40,10 +40,19 @@ public partial class MainWindow
         if (!string.IsNullOrWhiteSpace(preset.Branch))
             args.AddRange(["--branch", preset.Branch]);
         args.AddRange([preset.RepoUrl, sourceDir]);
-        await RunGitCommandAsync(_settings.RuntimeRoot, logPath, MaxLogBytes(), args.ToArray());
+        try
+        {
+            await RunGitCommandAsync(_settings.RuntimeRoot, logPath, MaxLogBytes(), args.ToArray());
+        }
+        catch (Exception ex)
+        {
+            await RuntimeBuildJobService.AppendRecoveryLogAsync(logPath, $"Runtime source clone failed and the incomplete folder will be removed before the next retry: {ex.Message}", MaxLogBytes());
+            await TryDeleteIncompleteRuntimeSourceAsync(sourceDir, logPath);
+            throw;
+        }
     }
 
-    private async Task<bool> IsValidGitWorkTreeAsync(string sourceDir, string logPath)
+    private async Task<bool> TryPrepareExistingRuntimeSourceAsync(string sourceDir, string logPath)
     {
         if (!Directory.Exists(Path.Combine(sourceDir, ".git")) && !File.Exists(Path.Combine(sourceDir, ".git")))
             return false;
@@ -51,7 +60,16 @@ public partial class MainWindow
         try
         {
             var output = await RunGitCommandAsync(sourceDir, null, 0, "rev-parse", "--is-inside-work-tree");
-            return string.Equals(output.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+            if (!string.Equals(output.Trim(), "true", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var status = await RunGitCommandAsync(sourceDir, null, 0, "status", "--porcelain");
+            if (string.IsNullOrWhiteSpace(status)) return true;
+
+            await RuntimeBuildJobService.AppendRecoveryLogAsync(logPath, "Existing runtime source checkout is incomplete or dirty and will be repaired before updating.", MaxLogBytes());
+            await RunGitCommandAsync(sourceDir, logPath, MaxLogBytes(), "checkout", "--force", "HEAD");
+            status = await RunGitCommandAsync(sourceDir, null, 0, "status", "--porcelain");
+            return string.IsNullOrWhiteSpace(status);
         }
         catch (Exception ex)
         {
@@ -77,16 +95,31 @@ public partial class MainWindow
             RedirectStandardError = true,
             WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Environment.CurrentDirectory
         };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("core.longpaths=true");
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
         var result = await _processRunner.RunAsync(psi, TimeSpan.FromMinutes(60));
         if (!string.IsNullOrWhiteSpace(logPath))
         {
-            await BoundedLogFile.AppendAsync(logPath, $"> git {string.Join(' ', args.Select(RuntimeBuildJobService.RedactCommandArgument))}{Environment.NewLine}{result.Output}{result.Error}{Environment.NewLine}", maxLogBytes);
+            await BoundedLogFile.AppendAsync(logPath, $"> git -c core.longpaths=true {string.Join(' ', args.Select(RuntimeBuildJobService.RedactCommandArgument))}{Environment.NewLine}{result.Output}{result.Error}{Environment.NewLine}", maxLogBytes);
         }
         if (result.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Error) ? result.Output : result.Error);
         return result.Output;
+    }
+
+    private async Task TryDeleteIncompleteRuntimeSourceAsync(string sourceDir, string logPath)
+    {
+        try
+        {
+            if (Directory.Exists(sourceDir) && IsSafeRuntimeFolder(sourceDir))
+                DeleteSafeRuntimeFolder(sourceDir);
+        }
+        catch (Exception cleanupEx)
+        {
+            await RuntimeBuildJobService.AppendRecoveryLogAsync(logPath, $"Incomplete runtime source cleanup failed: {cleanupEx.Message}", MaxLogBytes());
+        }
     }
 
     private async Task<(string Commit, string Path)> LatestLocalRuntimeVersionAsync(RuntimeBuildPreset preset)
@@ -155,6 +188,7 @@ public partial class MainWindow
 
     private async Task RunRuntimeBuildToolAsync(string script, string sourceDir, string buildDir, string installDir, RuntimeBuildPreset preset, string logPath, bool noUpdate, string processMarker, CancellationToken cancellationToken)
     {
+        var mode = RuntimeBuildCatalogService.BuildMode(preset);
         var psi = RuntimeBuildToolService.CreateBuildProcessStartInfo(
             HostExecutableResolver.WindowsPowerShellExe(),
             script,
@@ -162,12 +196,16 @@ public partial class MainWindow
             buildDir,
             installDir,
             preset,
+            mode,
             _settings.WslDistro,
             processMarker,
-            HostExecutableResolver.WslExe(),
+            mode == RuntimeMode.Wsl ? HostExecutableResolver.WslExe() : "",
+            mode == RuntimeMode.Native ? HostExecutableResolver.GitExe() : "",
+            mode == RuntimeMode.Native ? HostExecutableResolver.CMakeExe() : "",
             noUpdate);
 
-        RegisterWslBuildMarker(processMarker);
+        if (mode == RuntimeMode.Wsl)
+            RegisterWslBuildMarker(processMarker);
         try
         {
             var result = await _processRunner.RunAsync(psi, TimeSpan.FromHours(6), cancellationToken);
@@ -176,12 +214,14 @@ public partial class MainWindow
         }
         catch
         {
-            await CleanupWslBuildMarkerAsync(_settings.WslDistro, processMarker);
+            if (mode == RuntimeMode.Wsl)
+                await CleanupWslBuildMarkerAsync(_settings.WslDistro, processMarker);
             throw;
         }
         finally
         {
-            UnregisterWslBuildMarker(processMarker);
+            if (mode == RuntimeMode.Wsl)
+                UnregisterWslBuildMarker(processMarker);
         }
     }
 

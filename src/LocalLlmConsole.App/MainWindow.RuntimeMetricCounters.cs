@@ -51,82 +51,84 @@ public partial class MainWindow
         return (promptRate, generationRate);
     }
 
-    private async Task TrackLifetimeTokenDeltasAsync(string runtimeKey, double? generatedCounter, double? promptCounter)
+    private async Task TrackLifetimeTokenDeltasAsync(IReadOnlyList<RuntimeMetricPollResult> pollResults)
     {
-        if (_stateStore is null || !_llama.IsRunning || string.IsNullOrWhiteSpace(_llama.ActiveModelId))
+        if (_stateStore is null)
         {
             ResetLifetimeCounters();
             return;
         }
 
-        if (!string.Equals(runtimeKey, _lastLifetimeRuntimeKey, StringComparison.Ordinal))
+        _lifetimeTokenCounters.RetainRuntimeKeys(pollResults.Select(result => result.RuntimeKey));
+        foreach (var result in pollResults)
         {
-            _lastLifetimeRuntimeKey = runtimeKey;
-            _lastLifetimeGeneratedCounter = generatedCounter;
-            _lastLifetimePromptCounter = promptCounter;
-            return;
+            var generatedCounter = RuntimeGeneratedTokenCounter(result.Samples);
+            var promptCounter = RuntimePromptTokenCounter(result.Samples);
+            var delta = _lifetimeTokenCounters.Observe(
+                result.RuntimeKey,
+                result.Session.ModelId,
+                result.Session.ModelName,
+                generatedCounter,
+                promptCounter,
+                result.SlotSnapshot);
+
+            if (!delta.HasTokens) continue;
+
+            await _stateStore.AddTokenUsageAsync(delta.ModelId, delta.ModelName, delta.PromptTokens, delta.GeneratedTokens);
         }
 
-        var generatedDelta = RuntimeDashboardService.WholePositiveDeltaAndRemember(generatedCounter, ref _lastLifetimeGeneratedCounter);
-        var promptDelta = RuntimeDashboardService.WholePositiveDeltaAndRemember(promptCounter, ref _lastLifetimePromptCounter);
-
-        if (generatedDelta <= 0 && promptDelta <= 0) return;
-
-        var modelName = await ActiveModelDisplayNameAsync(_llama.ActiveModelId);
-        await _stateStore.AddTokenUsageAsync(_llama.ActiveModelId, modelName, promptDelta, generatedDelta);
         if (_viewModel.CurrentPage == "Lifetime") await RefreshLifetimeMetricsAsync();
     }
 
     private void ResetLifetimeCounters()
     {
-        _lastLifetimeRuntimeKey = "";
-        _lastLifetimePromptCounter = null;
-        _lastLifetimeGeneratedCounter = null;
+        _lifetimeTokenCounters.Reset();
     }
 
-    private async Task ApplyIdleUnloadPolicyAsync(string runtimeKey, RuntimeSlotSnapshot? slotSnapshot, double? generatedCounter, double? promptCounter)
+    private void ResetLifetimeCounters(LoadedModelSessionSnapshot? session)
     {
-        if (_autoUnloadInProgress || !_llama.IsRunning || _llama.State != LlamaRuntimeState.Loaded)
-        {
-            if (!_llama.IsRunning) ResetIdleCounters();
+        if (session is null)
             return;
-        }
+
+        _lifetimeTokenCounters.Reset(RuntimeMetricKey(session));
+    }
+
+    private async Task ApplyIdleUnloadPoliciesAsync(IReadOnlyList<RuntimeMetricPollResult> pollResults)
+    {
+        if (_autoUnloadInProgress)
+            return;
 
         var idleMinutes = _settings.AutoUnloadIdleMinutes;
-        var observedGenerated = RuntimeDashboardService.MaxNullable(generatedCounter, slotSnapshot?.GeneratedTokens);
-        var observedPrompt = RuntimeDashboardService.MaxNullable(promptCounter, slotSnapshot?.PromptTokensProcessed);
+        if (idleMinutes <= 0 || pollResults.Count == 0)
+        {
+            ResetIdleCounters();
+            return;
+        }
+
+        _idleUnloadTracker.RetainRuntimeKeys(pollResults.Select(result => result.RuntimeKey));
         var now = DateTimeOffset.UtcNow;
-
-        if (!string.Equals(runtimeKey, _lastIdleRuntimeKey, StringComparison.Ordinal))
+        var idleSessions = new List<RuntimeMetricPollResult>();
+        foreach (var result in pollResults)
         {
-            _lastIdleRuntimeKey = runtimeKey;
-            _lastIdleGeneratedCounter = observedGenerated;
-            _lastIdlePromptCounter = observedPrompt;
-            _lastRuntimeActivityAt = now;
-            return;
+            var generatedCounter = RuntimeGeneratedTokenCounter(result.Samples);
+            var promptCounter = RuntimePromptTokenCounter(result.Samples);
+            if (_idleUnloadTracker.Observe(result.RuntimeKey, result.SlotSnapshot, generatedCounter, promptCounter, idleMinutes, now))
+                idleSessions.Add(result);
         }
 
-        var hasTokenDelta = RuntimeDashboardService.PositiveDelta(observedGenerated, _lastIdleGeneratedCounter)
-            || RuntimeDashboardService.PositiveDelta(observedPrompt, _lastIdlePromptCounter);
-        var active = slotSnapshot?.IsProcessing == true || hasTokenDelta;
-        _lastIdleGeneratedCounter = observedGenerated;
-        _lastIdlePromptCounter = observedPrompt;
-
-        if (active || _lastRuntimeActivityAt is null)
-        {
-            _lastRuntimeActivityAt = now;
-            return;
-        }
-
-        if (idleMinutes <= 0) return;
-        if ((now - _lastRuntimeActivityAt.Value).TotalMinutes < idleMinutes) return;
+        if (idleSessions.Count == 0) return;
 
         _autoUnloadInProgress = true;
         try
         {
-            var modelName = await ActiveModelDisplayNameAsync(_llama.ActiveModelId);
-            SetStatus($"Auto-unloading {modelName} after {idleMinutes} idle minute{(idleMinutes == 1 ? "" : "s")}.");
-            await StopLoadedRuntimeAsync();
+            foreach (var idle in idleSessions)
+            {
+                var model = await FindModelByIdAsync(idle.Session.ModelId);
+                if (model is null) continue;
+
+                SetStatus($"Auto-unloading {model.Name} after {idleMinutes} idle minute{(idleMinutes == 1 ? "" : "s")}.");
+                await StopModelRuntimeAsync(model);
+            }
         }
         finally
         {
@@ -136,9 +138,14 @@ public partial class MainWindow
 
     private void ResetIdleCounters()
     {
-        _lastIdleRuntimeKey = "";
-        _lastIdlePromptCounter = null;
-        _lastIdleGeneratedCounter = null;
-        _lastRuntimeActivityAt = null;
+        _idleUnloadTracker.Reset();
+    }
+
+    private void ResetIdleCounters(LoadedModelSessionSnapshot? session)
+    {
+        if (session is null)
+            return;
+
+        _idleUnloadTracker.Reset(RuntimeMetricKey(session));
     }
 }

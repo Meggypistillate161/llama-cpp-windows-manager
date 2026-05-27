@@ -10,9 +10,12 @@ public static class RuntimeBuildToolService
         string buildDir,
         string installDir,
         RuntimeBuildPreset preset,
+        RuntimeMode mode,
         string wslDistro,
         string processMarker,
         string wslExe,
+        string gitExe,
+        string cmakeExe,
         bool noUpdate)
     {
         var psi = new ProcessStartInfo(powershellExe)
@@ -31,13 +34,22 @@ public static class RuntimeBuildToolService
             psi.ArgumentList.Add("-Branch");
             psi.ArgumentList.Add(preset.Branch);
         }
-        foreach (var arg in new[] { "-SourceDir", sourceDir, "-BuildDir", buildDir, "-InstallDir", installDir, "-Runtime", "wsl", "-WslDistro", wslDistro, "-Clean" })
+        foreach (var arg in new[] { "-SourceDir", sourceDir, "-BuildDir", buildDir, "-InstallDir", installDir, "-Runtime", RuntimeBuildCatalogService.ModeKey(mode), "-Clean" })
             psi.ArgumentList.Add(arg);
-        foreach (var arg in new[] { "-ProcessMarker", processMarker, "-WslExe", wslExe })
-            psi.ArgumentList.Add(arg);
+        if (RuntimeBuildCatalogService.NormalizeBuildMode(mode) == RuntimeMode.Wsl)
+        {
+            foreach (var arg in new[] { "-WslDistro", wslDistro, "-ProcessMarker", processMarker, "-WslExe", wslExe })
+                psi.ArgumentList.Add(arg);
+        }
+        else
+        {
+            foreach (var arg in new[] { "-GitExe", gitExe, "-CMakeExe", cmakeExe })
+                psi.ArgumentList.Add(arg);
+        }
         var backend = RuntimeBuildCatalogService.BuildBackend(preset);
         if (backend == RuntimeBackend.Cuda) psi.ArgumentList.Add("-Cuda");
         if (backend == RuntimeBackend.Vulkan) psi.ArgumentList.Add("-Vulkan");
+        if (backend == RuntimeBackend.Sycl) psi.ArgumentList.Add("-Sycl");
         if (noUpdate) psi.ArgumentList.Add("-NoUpdate");
         return psi;
     }

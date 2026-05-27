@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -51,10 +51,17 @@ public sealed partial class ReleaseHardeningTests
         Assert.DoesNotContain("bash -lc $Script", script, StringComparison.Ordinal);
         Assert.Contains("libcudart", script, StringComparison.Ordinal);
         Assert.Contains("[switch] $Vulkan", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $Sycl", script, StringComparison.Ordinal);
         Assert.Contains("Vulkan build dependencies", script, StringComparison.Ordinal);
         Assert.Contains("vulkaninfo --summary", script, StringComparison.Ordinal);
         Assert.Contains("Vulkan_GLSLC_EXECUTABLE", script, StringComparison.Ordinal);
         Assert.Contains("-DGGML_VULKAN=ON", script, StringComparison.Ordinal);
+        Assert.Contains("Intel oneAPI", script, StringComparison.Ordinal);
+        Assert.Contains("source /opt/intel/oneapi/setvars.sh", script, StringComparison.Ordinal);
+        Assert.Contains("sycl-ls", script, StringComparison.Ordinal);
+        Assert.Contains("sycl_cmake_args", script, StringComparison.Ordinal);
+        Assert.Contains("-DGGML_SYCL=ON", script, StringComparison.Ordinal);
+        Assert.Contains("ONEAPI_DEVICE_SELECTOR=level_zero:gpu", script, StringComparison.Ordinal);
         Assert.Contains("server_path=$InstallQ/bin/llama-server", script, StringComparison.Ordinal);
         Assert.Contains("--version >/dev/null 2>&1", script, StringComparison.Ordinal);
         Assert.Contains("probe_ld_path", script, StringComparison.Ordinal);
@@ -76,6 +83,7 @@ public sealed partial class ReleaseHardeningTests
         var ubuntuInstall = WslSetupCommands.InstallUbuntuAndBuildToolsPowerShell("C:\\Windows\\System32\\wsl.exe");
         var deleteWsl = WslSetupCommands.DeleteWslPowerShell("C:\\Windows\\System32\\wsl.exe");
         var deleteUbuntu = WslSetupCommands.DeleteUbuntuPowerShell("C:\\Windows\\System32\\wsl.exe", "Ubuntu-24.04");
+        var windowsCpuInstall = WindowsSetupCommands.InstallCpuToolsPowerShell();
 
         Assert.Contains("LLAMA_CPP_CONSOLE_BUILD_MARKER=marker'\"'\"'1", cleanup, StringComparison.Ordinal);
         Assert.Contains("LOCAL_LLM_CONSOLE_BUILD_MARKER=marker'\"'\"'1", cleanup, StringComparison.Ordinal);
@@ -86,6 +94,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("'C:\\Windows\\System32\\wsl.exe' -d 'Ubuntu-24.04' -- bash -s", ubuntuInstall, StringComparison.Ordinal);
         Assert.Contains("DELETE WSL", deleteWsl, StringComparison.Ordinal);
         Assert.Contains("--unregister 'Ubuntu-24.04'", deleteUbuntu, StringComparison.Ordinal);
+        Assert.Contains("winget install --id Git.Git", windowsCpuInstall, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.VisualStudio.2022.BuildTools", windowsCpuInstall, StringComparison.Ordinal);
     }
 
 
@@ -101,27 +111,37 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("CPU build tools do not include CUDA", File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "tools", "Build-LlamaCppRuntime.ps1")), StringComparison.Ordinal);
         Assert.Contains("Install CUDA", source, StringComparison.Ordinal);
         Assert.Contains("Install Vulkan", source, StringComparison.Ordinal);
+        Assert.Contains("Install Intel GPU", source, StringComparison.Ordinal);
+        Assert.Contains("Install oneAPI", source, StringComparison.Ordinal);
         Assert.Contains("Delete WSL", source, StringComparison.Ordinal);
         Assert.Contains("Delete Ubuntu", source, StringComparison.Ordinal);
         Assert.Equal("Update CPU Tools", WslEnvironmentService.CpuToolsActionLabel(new WslToolSnapshot(true, false, false, "CPU OK", "CUDA missing", "Vulkan missing")));
         Assert.Equal("Update CUDA", WslEnvironmentService.CudaToolsActionLabel(new WslToolSnapshot(false, true, false, "CPU missing", "CUDA OK", "Vulkan missing")));
         Assert.Equal("Update Vulkan", WslEnvironmentService.VulkanToolsActionLabel(new WslToolSnapshot(false, false, true, "CPU missing", "CUDA missing", "Vulkan OK")));
+        Assert.Equal("Update oneAPI", WslEnvironmentService.SyclToolsActionLabel(new WslToolSnapshot(false, false, false, "CPU missing", "CUDA missing", "Vulkan missing", true, "SYCL OK")));
         Assert.Equal("cuda-toolkit-13-2", WslSetupCommands.CudaToolkitPackage);
         Assert.Contains("cuda-keyring_1.1-1_all.deb", WslSetupCommands.InstallCudaToolkitCommand, StringComparison.Ordinal);
         Assert.Contains("/usr/local/cuda*/bin/nvcc", WslSetupCommands.InstallCudaToolkitCommand, StringComparison.Ordinal);
         Assert.Contains("libvulkan-dev", WslSetupCommands.VulkanToolsPackages, StringComparison.Ordinal);
         Assert.Contains("glslc", WslSetupCommands.InstallVulkanToolsCommand, StringComparison.Ordinal);
         Assert.Contains("vulkaninfo --summary", WslSetupCommands.InstallVulkanToolsCommand, StringComparison.Ordinal);
+        Assert.Contains("libze-intel-gpu1", WslSetupCommands.SyclRuntimePackages, StringComparison.Ordinal);
+        Assert.Contains("intel-oneapi-compiler-dpcpp-cpp", WslSetupCommands.SyclOneApiPackages, StringComparison.Ordinal);
+        Assert.Contains("apt.repos.intel.com/oneapi", WslSetupCommands.InstallSyclOneApiCommand, StringComparison.Ordinal);
         Assert.Contains("ToolProbeCommand", source, StringComparison.Ordinal);
         Assert.Contains("libcudart", WslSetupCommands.ToolProbeCommand, StringComparison.Ordinal);
         Assert.Contains("VULKAN_SUMMARY", WslSetupCommands.ToolProbeCommand, StringComparison.Ordinal);
+        Assert.Contains("SYCL_SUMMARY", WslSetupCommands.ToolProbeCommand, StringComparison.Ordinal);
         Assert.Contains("CPU build tools do not include CUDA", WslSetupCommands.CudaToolkitPreflightCommand, StringComparison.Ordinal);
         Assert.Contains("libcudart", WslSetupCommands.CudaToolkitPreflightCommand, StringComparison.Ordinal);
         Assert.Contains("Vulkan build dependencies", WslSetupCommands.VulkanToolsPreflightCommand, StringComparison.Ordinal);
         Assert.Contains("vulkaninfo", WslSetupCommands.VulkanToolsPreflightCommand, StringComparison.Ordinal);
+        Assert.Contains("sycl-ls", WslSetupCommands.SyclToolsPreflightCommand, StringComparison.Ordinal);
+        Assert.Contains("Level Zero Intel GPU", WslSetupCommands.SyclToolsPreflightCommand, StringComparison.Ordinal);
         Assert.Contains("CUDAToolkit_ROOT", File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "tools", "Build-LlamaCppRuntime.ps1")), StringComparison.Ordinal);
         Assert.Contains("CMAKE_CUDA_COMPILER", File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "tools", "Build-LlamaCppRuntime.ps1")), StringComparison.Ordinal);
         Assert.Contains("vulkan_cmake_args", File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "tools", "Build-LlamaCppRuntime.ps1")), StringComparison.Ordinal);
+        Assert.Contains("sycl_cmake_args", File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "tools", "Build-LlamaCppRuntime.ps1")), StringComparison.Ordinal);
     }
 
 
@@ -161,7 +181,7 @@ public sealed partial class ReleaseHardeningTests
             ]);
 
         var values = WslEnvironmentService.ParseKeyValueLines("CPU=1\nCPU_SUMMARY=CPU OK, CMake 3.28\nbad-line\nCUDA=0");
-        var tools = WslEnvironmentService.ParseToolProbeOutput("CPU=1\nCPU_SUMMARY=CPU OK, CMake 3.28\nCUDA=0\nCUDA_SUMMARY=CUDA missing nvcc\nVULKAN=1\nVULKAN_SUMMARY=Vulkan OK, Microsoft Direct3D12");
+        var tools = WslEnvironmentService.ParseToolProbeOutput("CPU=1\nCPU_SUMMARY=CPU OK, CMake 3.28\nCUDA=0\nCUDA_SUMMARY=CUDA missing nvcc\nVULKAN=1\nVULKAN_SUMMARY=Vulkan OK, Microsoft Direct3D12\nSYCL=1\nSYCL_SUMMARY=SYCL OK, Intel Arc");
         var unknownTools = WslEnvironmentService.UnknownToolSnapshot();
 
         Assert.Equal("Ubuntu-24.04", WslEnvironmentService.SelectedUbuntuDistroName(report, "missing"));
@@ -175,15 +195,19 @@ public sealed partial class ReleaseHardeningTests
         Assert.True(tools.CpuToolsInstalled);
         Assert.False(tools.CudaToolsInstalled);
         Assert.True(tools.VulkanToolsInstalled);
-        Assert.Equal("CPU OK, CMake 3.28 | CUDA missing nvcc | Vulkan OK, Microsoft Direct3D12", WslEnvironmentService.ToolSummary(tools));
+        Assert.True(tools.SyclToolsInstalled);
+        Assert.Equal("CPU OK, CMake 3.28 | CUDA missing nvcc | Vulkan OK, Microsoft Direct3D12 | SYCL OK, Intel Arc", WslEnvironmentService.ToolSummary(tools));
         Assert.Equal("Update CPU Tools", WslEnvironmentService.CpuToolsActionLabel(tools));
         Assert.Equal("Install CUDA", WslEnvironmentService.CudaToolsActionLabel(tools));
         Assert.Equal("Update Vulkan", WslEnvironmentService.VulkanToolsActionLabel(tools));
-        Assert.Equal("CPU tools unknown | CUDA unknown | Vulkan unknown", WslEnvironmentService.ToolSummary(unknownTools));
+        Assert.Equal("Update oneAPI", WslEnvironmentService.SyclToolsActionLabel(tools));
+        Assert.Equal("CPU tools unknown | CUDA unknown | Vulkan unknown | SYCL unknown", WslEnvironmentService.ToolSummary(unknownTools));
         Assert.Contains("Ubuntu-24.04", WslEnvironmentService.CudaToolkitIncompleteMessage("Ubuntu-24.04", "CUDA missing nvcc"), StringComparison.Ordinal);
         Assert.Contains("CUDA missing nvcc", WslEnvironmentService.CudaToolkitIncompleteMessage("Ubuntu-24.04", "CUDA missing nvcc"), StringComparison.Ordinal);
         Assert.Contains("Ubuntu-24.04", WslEnvironmentService.VulkanToolsIncompleteMessage("Ubuntu-24.04", "Vulkan missing glslc"), StringComparison.Ordinal);
         Assert.Contains("Vulkan missing glslc", WslEnvironmentService.VulkanToolsIncompleteMessage("Ubuntu-24.04", "Vulkan missing glslc"), StringComparison.Ordinal);
+        Assert.Contains("Ubuntu-24.04", WslEnvironmentService.SyclToolsIncompleteMessage("Ubuntu-24.04", "SYCL missing"), StringComparison.Ordinal);
+        Assert.Contains("SYCL missing", WslEnvironmentService.SyclToolsIncompleteMessage("Ubuntu-24.04", "SYCL missing"), StringComparison.Ordinal);
         Assert.Contains("libcudart", WslSetupCommands.ToolProbeCommand, StringComparison.Ordinal);
     }
 
@@ -207,6 +231,23 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("Task.Run(() => _wslEnvironment.DetectAsync())", mainWindow, StringComparison.Ordinal);
         Assert.Contains("_wslLinuxAutoRefreshDone", mainWindow, StringComparison.Ordinal);
         Assert.Contains("if (!_wslLinuxAutoRefreshDone)", mainWindow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WindowsAndWslToolTabsReuseCachedDetectionOnReturn()
+    {
+        var mainWindow = ReadMainWindowSources();
+
+        Assert.Contains("private WindowsToolSnapshot? _cachedWindowsTools;", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("private WslEnvironmentReport? _cachedWslReport;", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("private WslToolSnapshot? _cachedWslTools;", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("if (_cachedWindowsTools is not null)", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("PopulateWindowsPage(_cachedWindowsTools);", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("_cachedWindowsTools = tools;", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("if (_cachedWslReport is not null && _cachedWslTools is not null)", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("PopulateWslLinuxPage(_cachedWslReport, _cachedWslTools);", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("_cachedWslReport = report;", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("_cachedWslTools = tools;", mainWindow, StringComparison.Ordinal);
     }
 
 }

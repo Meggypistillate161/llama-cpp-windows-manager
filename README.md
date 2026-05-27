@@ -1,7 +1,7 @@
 # llama.cpp Console
 
 Windows-first desktop app for installing, configuring, and running local
-`llama.cpp` models in Ubuntu/WSL.
+`llama.cpp` models with native Windows or Ubuntu/WSL runtimes.
 
 This is an unofficial community project. It is not affiliated with, endorsed by,
 or maintained by the `llama.cpp` or `ggml-org` projects.
@@ -13,11 +13,19 @@ or maintained by the `llama.cpp` or `ggml-org` projects.
 - Registers local GGUF models and app-managed downloaded models.
 - Searches Hugging Face for GGUF files and downloads them with size or SHA-256
   verification before registration.
-- Detects WSL, Ubuntu distros, CPU build tools, CUDA Toolkit, and Vulkan build
-  prerequisites.
-- Builds CPU, CUDA, or Vulkan `llama.cpp` runtimes inside Ubuntu/WSL.
-- Starts and supervises `llama-server`, exposing its OpenAI-compatible `/v1`
-  endpoint for local clients with per-model launch profiles.
+- Downloads official prebuilt `llama.cpp` runtimes first.
+- Runs `llama-server` as either a native Windows runtime or an Ubuntu/WSL
+  runtime.
+- Supports CPU, CUDA, Vulkan, and Intel Arc SYCL runtime choices where upstream
+  publishes matching packages and the local hardware/driver stack supports
+  them.
+- Detects native Windows and Ubuntu/WSL CPU build tools, CUDA Toolkit, Vulkan
+  SDK/tools, and Intel oneAPI/SYCL prerequisites for advanced source builds.
+- Builds CPU, CUDA, Vulkan, or SYCL `llama.cpp` runtimes for native Windows or
+  Ubuntu/WSL when a custom source build is needed.
+- Starts and supervises one or more `llama-server` sessions, exposing
+  OpenAI-compatible `/v1` endpoints for local clients with per-model launch
+  profiles and stable per-model ports.
 - Shows live runtime metrics, token counters, logs, jobs, GPU summary, and model
   state in a WPF Overview page.
 - Preserves last-known token metrics during short runtime metric gaps.
@@ -28,15 +36,15 @@ or maintained by the `llama.cpp` or `ggml-org` projects.
 ## Comparison
 
 This app overlaps with other local-LLM tools, but it aims at a narrower Windows
-workflow: managing `llama.cpp` builds and `llama-server` launches inside
-Ubuntu/WSL without living in a terminal.
+workflow: managing `llama.cpp` builds and `llama-server` launches on native
+Windows or inside Ubuntu/WSL without living in a terminal.
 
 | Tool | Primary focus | How llama.cpp Console differs |
 | --- | --- | --- |
-| Ollama | Simple local model runner with CLI, app, model library, and local API. | Keeps you closer to raw `llama.cpp`/GGUF workflows: build CPU/CUDA/Vulkan runtimes in WSL, choose a runtime per model, and inspect logs/metrics directly. |
-| LM Studio | Polished desktop model browser, chat UI, and local OpenAI-compatible server. | Focuses less on chat UX and more on WSL setup, source builds, runtime selection, launch profiles, and operational monitoring. |
-| Jan | Open-source local AI platform with desktop, server/API, CLI, and assistant workflows. | Stays centered on Windows-managed `llama.cpp` in Ubuntu/WSL, plus optional OpenCode config helpers, instead of being a general assistant platform. |
-| `llama-server` | Upstream `llama.cpp` OpenAI-compatible HTTP server. | Wraps `llama-server` with Windows UI for WSL/toolchain setup, source checkout/builds, model registration, per-model launch settings, logs, metrics, and update/install flow. |
+| Ollama | Simple local model runner with CLI, app, model library, and local API. | Keeps you closer to raw `llama.cpp`/GGUF workflows: install official prebuilt CPU/CUDA/Vulkan/SYCL runtimes for Windows or WSL, keep custom source builds available, choose a runtime per model, and inspect logs/metrics directly. |
+| LM Studio | Polished desktop model browser, chat UI, and local OpenAI-compatible server. | Focuses less on chat UX and more on toolchain setup, source builds, runtime selection, launch profiles, and operational monitoring. |
+| Jan | Open-source local AI platform with desktop, server/API, CLI, and assistant workflows. | Stays centered on Windows-managed `llama.cpp` runtimes, plus optional OpenCode config helpers, instead of being a general assistant platform. |
+| `llama-server` | Upstream `llama.cpp` OpenAI-compatible HTTP server. | Wraps `llama-server` with Windows UI for official runtime downloads, optional Windows/WSL toolchain setup, source checkout/builds, model registration, per-model launch settings, logs, metrics, and update/install flow. |
 
 ## Safety Defaults
 
@@ -58,6 +66,39 @@ Ubuntu/WSL without living in a terminal.
   runtimes, cache, logs, and state unless the user explicitly chooses to delete
   app data during uninstall.
 
+## Quick Start
+
+The normal path is prebuilt-first:
+
+1. Open **Runtimes** and install the official prebuilt runtime that matches your
+   target: Windows or WSL, then CPU, CUDA, Vulkan, or Intel Arc SYCL.
+2. Open **Models**, search Hugging Face, and download a GGUF model file.
+3. Select the model, choose the runtime, keep or adjust its saved model port,
+   and click **Save For Model**.
+4. Open **Overview**, choose the model, and click **Load**. Additional models
+   can be loaded on their own saved ports when hardware capacity allows it.
+5. Open **OpenCode** and add each local model. The app writes separate local
+   providers/endpoints so concurrent models stay addressable.
+
+Use **Show advanced** in Runtimes only when you need to download source and build
+a custom fork, branch, patch, or runtime target without an official prebuilt
+package. The **Windows** and **WSL Linux** setup pages live under **Tools** and
+are mainly for advanced source builds or troubleshooting missing toolchains.
+
+## Runtime Compatibility
+
+`llama.cpp` Console is designed to let each model choose the runtime that fits
+your machine instead of forcing one global backend.
+
+| Target | Runtime choices | Normal path | Advanced path |
+| --- | --- | --- | --- |
+| Native Windows | CPU, CUDA, Vulkan, Intel Arc SYCL | Install an official prebuilt runtime from **Runtimes**. | Use **Tools > Windows** plus **Runtimes > Show advanced** for source builds. |
+| Ubuntu/WSL | CPU, CUDA, Vulkan, Intel Arc SYCL | Install an official prebuilt WSL/Linux runtime from **Runtimes**. | Use **Tools > WSL Linux** plus **Runtimes > Show advanced** for source builds. |
+
+GPU runtimes still depend on the matching vendor driver/runtime being available
+to Windows or WSL. CPU runtimes are the simplest fallback when GPU support is
+not available.
+
 ## End-User Distribution
 
 End users should receive a release artifact, not the source tree.
@@ -65,7 +106,7 @@ End users should receive a release artifact, not the source tree.
 Preferred artifact:
 
 ```text
-dist\installer\LlamaCppConsole-Setup-1.0.0-win-x64.exe
+dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe
 ```
 
 Portable artifact:
@@ -102,8 +143,13 @@ is still accepted for pre-v1 test setups.
 - Windows 10/11 x64.
 - PowerShell 5+.
 - .NET 8 SDK.
-- WSL with an Ubuntu distro for guided runtime builds.
-- Git, CMake, compiler tools, and optional CUDA/Vulkan tools inside Ubuntu.
+- For official prebuilt runtimes: no build toolchain is required. Windows or WSL
+  GPU drivers/toolkits may still be needed for the chosen runtime to see the
+  hardware.
+- For native Windows source builds: Git, CMake, Visual Studio C++ Build Tools,
+  and optional Windows CUDA, Vulkan, or Intel oneAPI/SYCL SDKs.
+- For WSL source builds: WSL with an Ubuntu distro plus Git, CMake, compiler
+  tools, and optional CUDA, Vulkan, or Intel oneAPI/SYCL tools inside Ubuntu.
 - Inno Setup 6 for installer builds.
 
 If `dotnet` is not on `PATH`, point the scripts at an SDK explicitly:
@@ -183,8 +229,9 @@ executable are `llama.cpp Console` and `LlamaCppConsole.exe`.
 
 - Installer builds require Inno Setup 6 locally or
   `LLAMA_CPP_CONSOLE_INNO_SETUP`.
-- WSL hardware coverage still needs validation across missing WSL, CPU-only,
-  CUDA-visible, Vulkan-visible, and unsupported-backend machines.
+- Hardware coverage still needs validation across missing WSL, CPU-only,
+  CUDA-visible, Vulkan-visible, Intel Arc/SYCL-visible, and unsupported-backend
+  machines.
 - macOS/Linux desktop packaging is not a release target.
 
 ## License

@@ -1,7 +1,7 @@
 #define AppName "llama.cpp Console"
 #define AppExeName "LlamaCppConsole.exe"
 #ifndef AppVersion
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #endif
 #ifndef SourceDir
 #define SourceDir "..\dist\LlamaCppConsole-win-x64"

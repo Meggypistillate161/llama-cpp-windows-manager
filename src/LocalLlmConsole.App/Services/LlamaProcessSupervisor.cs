@@ -8,15 +8,16 @@ public enum LlamaRuntimeState
     Loaded,
     Failed
 }
-
 public sealed partial class LlamaProcessSupervisor : IDisposable
 {
     private Process? _process;
     private BoundedLogWriter? _log;
     private bool _attached;
+    private bool _recovered;
     private RuntimeMode _lastRuntimeMode;
 
     public bool IsRunning => _process is { HasExited: false } || _attached;
+    public bool IsRecovered => _recovered;
     public string ActiveModelId { get; private set; } = "";
     public string ActiveRuntimeId { get; private set; } = "";
     public string LogPath { get; private set; } = "";
@@ -45,6 +46,7 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
         State = LlamaRuntimeState.Loading;
         LastExitCode = null;
         _attached = false;
+        _recovered = false;
         _lastRuntimeMode = runtime.Mode;
 
         var executable = runtime.Mode == RuntimeMode.Wsl ? ToWslPath(runtime.ExecutablePath) : runtime.ExecutablePath;
@@ -130,7 +132,8 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
                 ? "$LD_LIBRARY_PATH"
                 : $"{BashQuote(executableDir)}:{BashQuote(runtimeLibDir)}:${{LD_LIBRARY_PATH:-}}";
             var argv0 = string.IsNullOrWhiteSpace(_lastWslProcessMarker) ? "" : $" -a {BashQuote(_lastWslProcessMarker)}";
-            var command = $"export LD_LIBRARY_PATH={libraryPath}; cd {BashQuote(string.IsNullOrWhiteSpace(executableDir) ? "/" : executableDir)}; exec{argv0} {BashQuote(executable)} {string.Join(" ", args.Select(BashQuote))}";
+            var syclEnv = WslSyclEnvironmentPrefix(runtime.Backend);
+            var command = $"{syclEnv}export LD_LIBRARY_PATH={libraryPath}; cd {BashQuote(string.IsNullOrWhiteSpace(executableDir) ? "/" : executableDir)}; exec{argv0} {BashQuote(executable)} {string.Join(" ", args.Select(BashQuote))}";
             psi.ArgumentList.Add("-d");
             psi.ArgumentList.Add(settings.WslDistro);
             psi.ArgumentList.Add("--");
@@ -146,6 +149,8 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
         if (runtime.Mode == RuntimeMode.Native)
         {
             psi.WorkingDirectory = Path.GetDirectoryName(runtime.ExecutablePath) ?? Environment.CurrentDirectory;
+            if (runtime.Backend == RuntimeBackend.Sycl)
+                ApplyNativeSyclEnvironment(psi);
         }
         if (runtime.Mode == RuntimeMode.Native)
         {
@@ -156,7 +161,7 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
         _process.ErrorDataReceived += (_, e) => ObserveOutput(e.Data);
         _process.Exited += (_, _) =>
         {
-            try { LastExitCode = _process?.ExitCode; } catch {}
+            try { LastExitCode = _process?.ExitCode; } catch { }
             if (State != LlamaRuntimeState.Stopped)
                 State = LlamaRuntimeState.Failed;
         };
@@ -181,22 +186,6 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
         return Task.CompletedTask;
     }
 
-    public void AttachExisting(RuntimeRecord runtime, string modelId, AppSettings settings, string logPath, LlamaRuntimeState state = LlamaRuntimeState.Loaded, string processMarker = "")
-    {
-        Stop();
-        ActiveModelId = modelId;
-        ActiveRuntimeId = runtime.Id;
-        LogPath = logPath;
-        State = state is LlamaRuntimeState.Stopped or LlamaRuntimeState.Failed ? LlamaRuntimeState.Loading : state;
-        LastExitCode = null;
-        _lastSettings = settings;
-        _lastRuntimeMode = runtime.Mode;
-        _lastRuntimeExecutablePath = runtime.Mode == RuntimeMode.Wsl ? ToWslPath(runtime.ExecutablePath) : runtime.ExecutablePath;
-        _lastWslProcessMarker = runtime.Mode == RuntimeMode.Wsl ? processMarker : "";
-        _lastApiKey = settings.ModelApiKey ?? "";
-        _attached = true;
-    }
-
     public bool MarkLoadedIfRunning()
     {
         if (!IsRunning || State != LlamaRuntimeState.Loading) return false;
@@ -208,7 +197,7 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
     private void ObserveOutput(string? line)
     {
         if (line is null) return;
-        try { _log?.WriteLine(RedactRuntimeLogLine(line)); } catch {}
+        try { _log?.WriteLine(RedactRuntimeLogLine(line)); } catch { }
         if (State == LlamaRuntimeState.Loading && LooksLoaded(line))
             State = LlamaRuntimeState.Loaded;
     }
@@ -234,13 +223,13 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
                 _process.WaitForExit(3000);
             }
         }
-        catch {}
+        catch { }
         if (_lastSettings is not null && _lastRuntimeMode == RuntimeMode.Wsl)
         {
             TryStopWslLlama(_lastSettings, _lastRuntimeExecutablePath, _lastWslProcessMarker);
         }
-        try { _process?.Dispose(); } catch {}
-        try { _log?.Dispose(); } catch {}
+        try { _process?.Dispose(); } catch { }
+        try { _log?.Dispose(); } catch { }
         _process = null;
         _log = null;
         ActiveModelId = "";
@@ -252,6 +241,7 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
         _lastWslProcessMarker = "";
         _lastApiKey = "";
         _attached = false;
+        _recovered = false;
     }
 
     public void Dispose() => Stop();

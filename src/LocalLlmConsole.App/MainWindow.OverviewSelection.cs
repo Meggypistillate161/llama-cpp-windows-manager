@@ -23,8 +23,8 @@ public partial class MainWindow
     private void RefreshOverviewModelChoices(IReadOnlyList<ModelRecord> models)
     {
         var selectedId = SelectedOverviewModel()?.Id;
-        if (string.IsNullOrWhiteSpace(selectedId) && _llama.IsRunning)
-            selectedId = _llama.ActiveModelId;
+        if (string.IsNullOrWhiteSpace(selectedId))
+            selectedId = _sessions.SelectedSnapshot()?.ModelId;
 
         _viewModel.Overview.ReplaceModels(models);
 
@@ -57,34 +57,51 @@ public partial class MainWindow
     {
         var model = SelectedOverviewModel();
         var hasSelection = model is not null;
-        var selectedModelActive = IsModelActive(model);
-        if (_overviewLoadButton is not null) _overviewLoadButton.IsEnabled = hasSelection && !selectedModelActive;
-        if (_overviewUnloadButton is not null) _overviewUnloadButton.IsEnabled = selectedModelActive;
+        var selectedModelLoaded = IsModelLoaded(model);
+        if (_overviewLoadButton is not null) _overviewLoadButton.IsEnabled = hasSelection && !selectedModelLoaded;
+        if (_overviewUnloadButton is not null) _overviewUnloadButton.IsEnabled = selectedModelLoaded;
+    }
+
+    private async Task SelectOverviewModelSessionAsync()
+    {
+        var model = SelectedOverviewModel();
+        if (model is null) return;
+
+        var selectedLoadedModel = IsModelLoaded(model);
+        if (selectedLoadedModel && !IsModelActive(model))
+        {
+            _sessions.SelectModel(model.Id);
+            _activeRuntimeSettings = _sessions.ActiveSettings;
+            await SaveActiveRuntimeSessionsAsync();
+        }
+
+        ResetMetricCounters();
+        if (!selectedLoadedModel)
+            SetStatus($"{model.Name} is not loaded. Load it to expose an OpenAI-compatible endpoint.");
+        await RefreshRuntimeMetricsAsync();
     }
 
     private async Task<(string Model, string Runtime)> ActiveRuntimeLabelsAsync()
     {
-        if (!_llama.IsRunning && _llama.State != LlamaRuntimeState.Failed) return ("None", "Stopped");
-        var model = await ActiveModelDisplayNameAsync(_llama.ActiveModelId);
-        var runtime = _llama.ActiveRuntimeId;
-
-        if (_stateStore is not null)
+        await Task.CompletedTask;
+        var selectedModel = SelectedOverviewModel();
+        var active = selectedModel is null
+            ? _sessions.SelectedSnapshot()
+            : _sessions.SessionForModel(selectedModel.Id);
+        if (selectedModel is not null && active is null)
+            return ($"Stopped: {selectedModel.Name}", "No loaded runtime");
+        if (active is null) return ("None", "Stopped");
+        var status = active.Status switch
         {
-            var runtimes = await _stateStore.ListRuntimesAsync();
-            runtime = runtimes.FirstOrDefault(item => string.Equals(item.Id, _llama.ActiveRuntimeId, StringComparison.OrdinalIgnoreCase))?.Name ?? runtime;
-        }
-
-        model = string.IsNullOrWhiteSpace(model) ? "Unknown model" : model;
-        var status = _llama.State switch
-        {
-            LlamaRuntimeState.Loaded => "Loaded",
-            LlamaRuntimeState.Loading => "Loading",
-            LlamaRuntimeState.Failed => "Failed",
+            LoadedModelSessionStatus.Running => "Loaded",
+            LoadedModelSessionStatus.Warm => "Loaded",
+            LoadedModelSessionStatus.Loading => "Loading",
+            LoadedModelSessionStatus.Failed => "Failed",
             _ => "Stopped"
         };
         if (_llama.State == LlamaRuntimeState.Failed && _llama.LastExitCode is int exitCode)
             status = $"Failed ({exitCode})";
-        return ($"{status}: {model}", string.IsNullOrWhiteSpace(runtime) ? "Unknown runtime" : runtime);
+        return ($"{status}: {active.ModelName}", string.IsNullOrWhiteSpace(active.RuntimeName) ? "Unknown runtime" : active.RuntimeName);
     }
 
     private async Task<string> ActiveModelDisplayNameAsync(string modelId)

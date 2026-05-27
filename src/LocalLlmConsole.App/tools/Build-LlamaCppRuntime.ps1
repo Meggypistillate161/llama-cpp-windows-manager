@@ -16,12 +16,14 @@ param(
   [string] $ProcessMarker = "",
   [switch] $Cuda,
   [switch] $Vulkan,
+  [switch] $Sycl,
   [switch] $Clean,
   [switch] $NoUpdate
 )
 
 $ErrorActionPreference = "Stop"
-if ($Cuda -and $Vulkan) { throw "Choose either -Cuda or -Vulkan, not both." }
+$BackendSwitchCount = @($Cuda, $Vulkan, $Sycl) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
+if ($BackendSwitchCount -gt 1) { throw "Choose only one of -Cuda, -Vulkan, or -Sycl." }
 
 function ConvertTo-WslPath {
   param([string] $Path)
@@ -140,6 +142,101 @@ function Invoke-Logged {
   }
 }
 
+function Invoke-GitLogged {
+  param([string[]] $Arguments)
+  Invoke-Logged $GitExe (@("-c", "core.longpaths=true") + $Arguments)
+}
+
+function Get-OneApiRootCandidates {
+  $roots = @()
+  if (-not [string]::IsNullOrWhiteSpace($env:ONEAPI_ROOT)) { $roots += $env:ONEAPI_ROOT }
+  foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+    if ([string]::IsNullOrWhiteSpace($base)) { continue }
+    $roots += (Join-Path $base "Intel\oneAPI")
+  }
+  return @($roots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique)
+}
+
+function Get-OneApiPathEntries {
+  $relative = @(
+    "compiler\latest\bin",
+    "compiler\latest\windows\bin",
+    "mkl\latest\bin",
+    "dnnl\latest\bin",
+    "tbb\latest\bin"
+  )
+  $entries = @()
+  foreach ($root in (Get-OneApiRootCandidates)) {
+    foreach ($part in $relative) {
+      $candidate = Join-Path $root $part
+      if (Test-Path -LiteralPath $candidate -PathType Container) { $entries += $candidate }
+    }
+  }
+  return @($entries | Select-Object -Unique)
+}
+
+function Find-OneApiSetvarsBat {
+  foreach ($root in (Get-OneApiRootCandidates)) {
+    $candidate = Join-Path $root "setvars.bat"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+  }
+  return ""
+}
+
+function Import-OneApiEnvironment {
+  $setvars = Find-OneApiSetvarsBat
+  if ([string]::IsNullOrWhiteSpace($setvars)) {
+    throw "Intel oneAPI setvars.bat was not found. Install Intel oneAPI Base Toolkit from the Windows page first."
+  }
+  Write-Host "> $setvars --force"
+  $cmd = "call `"$setvars`" --force >nul && set"
+  $output = & cmd.exe /s /c $cmd
+  if ($LASTEXITCODE -ne 0) { throw "Intel oneAPI setvars.bat failed with exit code $LASTEXITCODE" }
+  foreach ($line in $output) {
+    $idx = $line.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $name = $line.Substring(0, $idx)
+    $value = $line.Substring($idx + 1)
+    [Environment]::SetEnvironmentVariable($name, $value, [EnvironmentVariableTarget]::Process)
+  }
+}
+
+function Resolve-OneApiExecutable {
+  param([string[]] $Names)
+  foreach ($entry in ((Get-OneApiPathEntries) + (($env:PATH -split [System.IO.Path]::PathSeparator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }))) {
+    $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"'))
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) { continue }
+    foreach ($name in $Names) {
+      $candidate = Join-Path $expanded $name
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
+  }
+  return ""
+}
+
+function Initialize-NativeSyclToolchain {
+  Import-OneApiEnvironment
+  $icx = Resolve-OneApiExecutable @("icx.exe")
+  $icpx = Resolve-OneApiExecutable @("icpx.exe", "icx.exe")
+  $syclLs = Resolve-OneApiExecutable @("sycl-ls.exe")
+  if ([string]::IsNullOrWhiteSpace($icx)) { throw "Intel oneAPI compiler icx.exe was not found after setvars.bat." }
+  if ([string]::IsNullOrWhiteSpace($icpx)) { throw "Intel oneAPI DPC++ compiler was not found after setvars.bat." }
+  if ([string]::IsNullOrWhiteSpace($syclLs)) { throw "sycl-ls.exe was not found after setvars.bat." }
+  Write-Host "> $icpx --version"
+  $compilerVersion = (& $icpx --version | Select-Object -First 1)
+  if (-not [string]::IsNullOrWhiteSpace($compilerVersion)) { Write-Host $compilerVersion }
+  Write-Host "> $syclLs"
+  $syclOutput = & $syclLs 2>&1
+  foreach ($line in $syclOutput) { Write-Host $line }
+  if (-not ($syclOutput -match "level_zero.*gpu")) {
+    throw "sycl-ls did not report a Level Zero GPU. Install/update the Intel Arc driver and Intel oneAPI runtime, then retry."
+  }
+  return [pscustomobject]@{
+    CCompiler = $icx
+    CxxCompiler = $icpx
+  }
+}
+
 function Assert-SafeDirectoryRemovalTarget {
   param([string] $Path, [string] $Label)
   $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
@@ -184,6 +281,8 @@ if ($Runtime -eq "wsl") {
 } else {
   $GitExe = Resolve-Executable $GitExe "git.exe"
   $CMakeExe = Resolve-Executable $CMakeExe "cmake.exe"
+  $NativeSyclToolchain = $null
+  if ($Sycl) { $NativeSyclToolchain = Initialize-NativeSyclToolchain }
 }
 if (-not (Test-AllowedGitSource $RepoUrl)) { throw "Only HTTPS, SSH, file, or existing local Git repository sources are allowed." }
 if (-not (Test-SafeGitRefName $Branch)) { throw "Unsafe Git branch/ref name: $Branch" }
@@ -282,6 +381,40 @@ if [ -n "$vulkan_lib" ]; then vulkan_cmake_args+=(-DVulkan_LIBRARY="$vulkan_lib"
   } else {
     ":"
   }
+  $SyclPreflight = if ($Sycl) {
+@'
+if [ -f /opt/intel/oneapi/setvars.sh ]; then
+  source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+fi
+if ! command -v icx >/dev/null 2>&1; then
+  echo "Intel oneAPI C compiler icx was not found. Use WSL Linux > Install oneAPI from the app." >&2
+  exit 2
+fi
+if ! command -v icpx >/dev/null 2>&1; then
+  echo "Intel oneAPI DPC++ compiler icpx was not found. Use WSL Linux > Install oneAPI from the app." >&2
+  exit 2
+fi
+if ! command -v sycl-ls >/dev/null 2>&1; then
+  echo "sycl-ls was not found after sourcing oneAPI environment." >&2
+  exit 2
+fi
+icpx --version | head -n 1
+if ! sycl-ls 2>/dev/null | grep -qi 'level_zero.*gpu'; then
+  echo "No Level Zero Intel GPU device is visible to sycl-ls. Install Intel GPU runtime packages inside WSL and update the Intel graphics driver if needed." >&2
+  exit 2
+fi
+sycl-ls
+export ONEAPI_DEVICE_SELECTOR=level_zero:gpu
+export ZES_ENABLE_SYSMAN=1
+export SYCL_CACHE_PERSISTENT=1
+export UR_L0_ENABLE_RELAXED_ALLOCATION_LIMITS=1
+sycl_cmake_args=(-DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx)
+'@
+  } else {
+@'
+sycl_cmake_args=()
+'@
+  }
   $Defs = @(
     "-DCMAKE_BUILD_TYPE=Release",
     "-DLLAMA_BUILD_SERVER=ON",
@@ -293,6 +426,7 @@ if [ -n "$vulkan_lib" ]; then vulkan_cmake_args+=(-DVulkan_LIBRARY="$vulkan_lib"
   )
   if ($Cuda) { $Defs += "-DGGML_CUDA=ON" }
   if ($Vulkan) { $Defs += "-DGGML_VULKAN=ON" }
+  if ($Sycl) { $Defs += @("-DGGML_SYCL=ON", "-DGGML_SYCL_F16=ON") }
   $DefArgs = ($Defs | ForEach-Object { Quote-Bash $_ }) -join " "
   $CleanBlock = if ($Clean) { "rm -rf $BuildQ" } else { ":" }
   $CloneBlock = if ([string]::IsNullOrWhiteSpace($RepoUrl)) {
@@ -315,6 +449,7 @@ set -e
 $MarkerExport
 $CudaPreflight
 $VulkanPreflight
+$SyclPreflight
 $CloneBlock
 $UpdateBlock
 $CleanBlock
@@ -326,7 +461,7 @@ elif command -v ninja-build >/dev/null 2>&1; then
   generator_args=(-G Ninja -DCMAKE_MAKE_PROGRAM="`$(command -v ninja-build)")
 fi
 if [ `${#generator_args[@]} -gt 0 ]; then echo "Using CMake generator: Ninja"; fi
-cmake -S $SourceQ -B $BuildQ "`${generator_args[@]}" $DefArgs "`${cuda_cmake_args[@]}" "`${vulkan_cmake_args[@]}"
+cmake -S $SourceQ -B $BuildQ "`${generator_args[@]}" $DefArgs "`${cuda_cmake_args[@]}" "`${vulkan_cmake_args[@]}" "`${sycl_cmake_args[@]}"
 build_status=0
 cmake --build $BuildQ --config Release --target install --parallel `$(nproc) || build_status=`$?
 server_path=$InstallQ/bin/llama-server
@@ -372,12 +507,12 @@ fi
     $CloneArgs = @("clone", "--depth", "1")
     if (-not [string]::IsNullOrWhiteSpace($Branch)) { $CloneArgs += @("--branch", $Branch) }
     $CloneArgs += @($RepoUrl, $SourceDir)
-    Invoke-Logged $GitExe $CloneArgs
+    Invoke-GitLogged $CloneArgs
   }
   if (-not $NoUpdate -and -not [string]::IsNullOrWhiteSpace($RepoUrl) -and (Test-Path -LiteralPath (Join-Path $SourceDir ".git"))) {
-    Invoke-Logged $GitExe @("-C", $SourceDir, "fetch", "--all", "--tags")
-    if (-not [string]::IsNullOrWhiteSpace($Branch)) { Invoke-Logged $GitExe @("-C", $SourceDir, "checkout", $Branch) }
-    Invoke-Logged $GitExe @("-C", $SourceDir, "pull", "--ff-only")
+    Invoke-GitLogged @("-C", $SourceDir, "fetch", "--all", "--tags")
+    if (-not [string]::IsNullOrWhiteSpace($Branch)) { Invoke-GitLogged @("-C", $SourceDir, "checkout", $Branch) }
+    Invoke-GitLogged @("-C", $SourceDir, "pull", "--ff-only")
   }
   if ($Clean -and (Test-Path -LiteralPath $BuildDir)) {
     Remove-Item -LiteralPath $BuildDir -Recurse -Force
@@ -394,13 +529,22 @@ fi
   )
   if ($Cuda) { $Defs += "-DGGML_CUDA=ON" }
   if ($Vulkan) { $Defs += "-DGGML_VULKAN=ON" }
+  if ($Sycl) {
+    $Defs += @(
+      "-DGGML_SYCL=ON",
+      "-DGGML_SYCL_F16=ON",
+      "-DCMAKE_C_COMPILER=$($NativeSyclToolchain.CCompiler)",
+      "-DCMAKE_CXX_COMPILER=$($NativeSyclToolchain.CxxCompiler)"
+    )
+  }
   $ConfigureArgs = @("-S", $SourceDir, "-B", $BuildDir) + $Defs
   Invoke-Logged $CMakeExe $ConfigureArgs
   Invoke-Logged $CMakeExe @("--build", $BuildDir, "--config", "Release", "--target", "install", "--parallel", [string][Environment]::ProcessorCount)
   $ServerExe = Join-Path $InstallDir "bin\llama-server.exe"
   if (-not (Test-Path -LiteralPath $ServerExe)) { throw "Build finished but llama-server.exe was not found at $ServerExe" }
+  Invoke-Logged $ServerExe @("--version")
   try {
-    $Commit = (& $GitExe -C $SourceDir rev-parse --short=12 HEAD 2>$null).Trim()
+    $Commit = (& $GitExe -c core.longpaths=true -C $SourceDir rev-parse --short=12 HEAD 2>$null).Trim()
   } catch {
     $Commit = "latest"
   }
@@ -409,7 +553,7 @@ fi
   $WslRuntimePath = ""
 }
 
-$Flavor = if ($Cuda) { "cuda" } elseif ($Vulkan) { "vulkan" } else { "cpu" }
+$Flavor = if ($Cuda) { "cuda" } elseif ($Vulkan) { "vulkan" } elseif ($Sycl) { "sycl" } else { "cpu" }
 $Id = Normalize-Id "llama-cpp-$Commit-$Runtime-$Flavor"
 $Metadata = [ordered]@{
   id = $Id

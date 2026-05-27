@@ -72,12 +72,13 @@ public sealed partial class OpenCodeConfigService
     {
         var config = ReadConfigObject(configPath, createIfMissing: false);
         var modelId = LocalModelId(model);
+        var providerId = LocalProviderIdFor(model);
         var modelObject = CreateLocalModelObject(model, contextSize, outputLimit);
-        var fullId = $"{LocalProviderId}/{modelId}";
+        var fullId = $"{providerId}/{modelId}";
         var provider = new JsonObject
         {
             ["npm"] = "@ai-sdk/openai-compatible",
-            ["name"] = LocalProviderName,
+            ["name"] = LocalProviderNameFor(model),
             ["options"] = new JsonObject
             {
                 ["baseURL"] = baseUrl,
@@ -92,13 +93,13 @@ public sealed partial class OpenCodeConfigService
         {
             ["$schema"] = SchemaUrl,
             ["model"] = fullId,
-            ["provider"] = new JsonObject { [LocalProviderId] = provider },
+            ["provider"] = new JsonObject { [providerId] = provider },
             ["attachment"] = DefaultAttachmentObject()
         };
-        AddEnabledProvidersEnvelope(envelope, config, LocalProviderId);
+        AddEnabledProvidersEnvelope(envelope, config, providerId);
         return new OpenCodeLocalModelDraft(
             fullId,
-            LocalProviderId,
+            providerId,
             modelId,
             $"{fullId} - {model.Name}",
             FormatNode(envelope));
@@ -107,12 +108,13 @@ public sealed partial class OpenCodeConfigService
     public OpenCodeModelAddAnalysis AnalyzeLocalModelSnippet(string configPath, ModelRecord model, string snippet)
     {
         var targetModelId = LocalModelId(model);
-        var fullModelId = $"{LocalProviderId}/{targetModelId}";
+        var targetProviderId = LocalProviderIdFor(model);
+        var fullModelId = $"{targetProviderId}/{targetModelId}";
         JsonObject proposed;
         try
         {
             var envelope = ParseObject(snippet, "Model config");
-            proposed = ModelComparisonEnvelope(envelope, LocalProviderId, targetModelId);
+            proposed = ModelComparisonEnvelope(envelope, targetProviderId, targetModelId);
         }
         catch (Exception ex)
         {
@@ -139,12 +141,12 @@ public sealed partial class OpenCodeConfigService
                     if (!string.IsNullOrWhiteSpace(providerName) && !label.Contains(providerName, StringComparison.OrdinalIgnoreCase))
                         label = $"{label} ({providerName})";
 
-                    if (string.Equals(providerId, LocalProviderId, StringComparison.OrdinalIgnoreCase)
+                    if (string.Equals(providerId, targetProviderId, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(candidateModelId, targetModelId, StringComparison.OrdinalIgnoreCase))
                     {
                         sameIdExists = true;
-                        sameConfig = JsonEquivalent(ModelComparisonEnvelope(config, LocalProviderId, targetModelId), proposed)
-                            && IsProviderEnabled(config, LocalProviderId);
+                        sameConfig = JsonEquivalent(ModelComparisonEnvelope(config, targetProviderId, targetModelId), proposed)
+                            && IsProviderEnabled(config, targetProviderId);
                         continue;
                     }
 
@@ -163,19 +165,20 @@ public sealed partial class OpenCodeConfigService
         var envelope = ParseObject(snippet, "Model config");
         var config = ReadConfigObject(configPath, createIfMissing: true);
         var modelId = LocalModelId(model);
+        var providerId = LocalProviderIdFor(model);
         if (addAsNew)
         {
-            var existingModels = EnsureObject(EnsureLocalProvider(config, baseUrl, apiKey), "models");
+            var existingModels = EnsureObject(EnsureLocalProvider(config, providerId, LocalProviderNameFor(model), baseUrl, apiKey), "models");
             modelId = UniqueModelId(existingModels, modelId);
-            RenameEnvelopeModel(envelope, LocalProviderId, LocalModelId(model), modelId);
+            RenameEnvelopeModel(envelope, providerId, LocalModelId(model), modelId);
         }
-        MergeModelEnvelope(config, envelope, LocalProviderId, modelId);
-        EnsureLocalProvider(config, baseUrl, apiKey);
+        MergeModelEnvelope(config, envelope, providerId, modelId);
+        EnsureLocalProvider(config, providerId, LocalProviderNameFor(model), baseUrl, apiKey);
 
-        var fullId = $"{LocalProviderId}/{modelId}";
+        var fullId = $"{providerId}/{modelId}";
         if (string.IsNullOrWhiteSpace(config["model"]?.ToString()))
             config["model"] = fullId;
-        EnsureProviderEnabled(config, LocalProviderId);
+        EnsureProviderEnabled(config, providerId);
 
         SaveConfigObject(configPath, config);
         return fullId;
@@ -185,7 +188,8 @@ public sealed partial class OpenCodeConfigService
     {
         EnsureConfigFile(configPath);
         var config = ReadConfigObject(configPath, createIfMissing: true);
-        var provider = EnsureLocalProvider(config, baseUrl, apiKey);
+        var providerId = LocalProviderIdFor(model);
+        var provider = EnsureLocalProvider(config, providerId, LocalProviderNameFor(model), baseUrl, apiKey);
 
         var models = EnsureObject(provider, "models");
         var modelId = LocalModelId(model);
@@ -201,10 +205,10 @@ public sealed partial class OpenCodeConfigService
             limit["context"] = contextSize;
         }
 
-        var fullId = $"{LocalProviderId}/{modelId}";
+        var fullId = $"{providerId}/{modelId}";
         if (string.IsNullOrWhiteSpace(config["model"]?.ToString()))
             config["model"] = fullId;
-        EnsureProviderEnabled(config, LocalProviderId);
+        EnsureProviderEnabled(config, providerId);
 
         SaveConfigObject(configPath, config);
         return fullId;
@@ -214,9 +218,24 @@ public sealed partial class OpenCodeConfigService
     {
         if (!File.Exists(configPath)) return false;
         var config = ReadConfigObject(configPath, createIfMissing: false);
-        if (config["provider"]?[LocalProviderId] is not JsonObject) return false;
+        if (config["provider"] is not JsonObject providers) return false;
 
-        EnsureLocalProvider(config, baseUrl, apiKey);
+        var updated = false;
+        foreach (var (providerId, providerNode) in providers.ToArray())
+        {
+            if (!IsLocalProviderId(providerId) || providerNode is not JsonObject provider) continue;
+            var updateBaseUrl = string.Equals(providerId, LocalProviderId, StringComparison.OrdinalIgnoreCase);
+            EnsureLocalProvider(
+                config,
+                providerId,
+                provider["name"]?.ToString() ?? LocalProviderName,
+                baseUrl,
+                apiKey,
+                updateBaseUrl);
+            updated = true;
+        }
+
+        if (!updated) return false;
         SaveConfigObject(configPath, config);
         return true;
     }

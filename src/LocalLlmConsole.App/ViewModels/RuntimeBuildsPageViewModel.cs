@@ -66,7 +66,7 @@ public sealed class RuntimeBuildsPageViewModel
 
         Rows.Add(new RuntimeBuildPresetRow
         {
-            Backend = "CPU WSL",
+            Backend = "CPU Windows",
             LocalStatus = "Custom",
             DownloadAction = "Add",
             DownloadToolTip = "Add a custom llama.cpp Git repository preset.",

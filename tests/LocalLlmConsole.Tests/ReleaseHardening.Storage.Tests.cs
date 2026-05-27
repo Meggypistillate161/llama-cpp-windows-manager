@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -124,6 +124,27 @@ public sealed partial class ReleaseHardeningTests
         var loaded = await store.GetAppSettingsAsync(root);
 
         Assert.False(loaded.DeleteRuntimeSourceAfterSuccessfulBuild);
+    }
+
+    [Fact]
+    public async Task DeletingModelFreesSavedLaunchProfilePort()
+    {
+        var root = CreateTempRoot();
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var model = new ModelRecord(
+            "model-1",
+            "Test Model",
+            Path.Combine(root, "models", "test.gguf"),
+            OwnershipKind.External,
+            "{}",
+            DateTimeOffset.UtcNow);
+
+        await store.UpsertModelAsync(model);
+        await store.SaveModelLaunchSettingsAsync(model.Id, ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with { Port = 8083 }));
+        await store.DeleteModelAsync(model.Id);
+
+        Assert.Null(await store.GetModelLaunchSettingsAsync(model.Id));
     }
 
 

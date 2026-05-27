@@ -1,6 +1,6 @@
 # Remaining Engineering Work
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 ## Immediate Internal Cleanup
 
@@ -25,9 +25,6 @@ These came from the May 26 external bug report triage. The scary Hugging Face
 download timeout and range-resume corruption claims were reviewed against the
 current code and are not being tracked as release blockers.
 
-- Make `LocalAppService` resilient to unexpected `HttpListener.GetContextAsync`
-  failures by logging non-shutdown listener errors and either continuing safely
-  or surfacing a clear app-service failure.
 - Add a bounded or TTL-based cache for Hugging Face repository metadata so
   `_repoInfoCache` cannot grow indefinitely across many unique searches.
 - Revisit legacy settings migration so exact old default values are migrated
@@ -46,9 +43,9 @@ These are broader product items already implied by the release docs:
 - Continue clean Windows VM validation for a published app with no repo checkout.
 - Add trusted signing and broaden installer smoke testing on clean Windows VMs.
 - Keep the GitHub update feed and release asset naming stable for future releases.
-- WSL/hardware matrix validation across missing WSL, CPU build tools, CUDA-visible WSL, Vulkan-visible WSL, and unsupported backends.
+- Hardware matrix validation across missing WSL, CPU build tools, CUDA-visible WSL, Vulkan-visible WSL, Intel Arc/SYCL-visible Windows and WSL, and unsupported backends.
 - Benchmark WSL runtime source/build staging on `/mnt/<drive>` versus the distro's Linux filesystem; if Linux-side staging wins, preserve Windows-side metadata/cleanup semantics while copying only final runtime artifacts back to the workspace.
-- Runtime archive checksum/signature verification before future downloaded binary runtime registration.
+- Prefer upstream runtime archive checksums/signatures when llama.cpp publishes them; current runtime packages are downloaded from official GitHub releases and locally fingerprinted after extraction.
 
 ## Completed This Pass
 
@@ -101,3 +98,6 @@ These are broader product items already implied by the release docs:
 - Added terminal runtime build-job cleanup with safe job-record deletion and workspace-log deletion.
 - Tightened runtime build deletion so runtime files can only be deleted when the runtime is not active and not referenced by saved model launch settings.
 - Added an Inno Setup installer source and build wrapper with preferred `D:\LlamaCppConsole` installs, editable install location, launch-after-install, existing-install reuse, and uninstall data preservation by default.
+- Added native Windows setup/tool detection, official prebuilt runtime downloads, advanced source-build hiding, Windows/WSL CUDA/Vulkan/SYCL package presets, source/prebuilt runtime equivalence, multi-model loaded sessions, stable per-model ports, and OpenCode provider separation per model endpoint.
+- Added Intel Arc/SYCL support for native Windows and WSL, including oneAPI setup/detection, WSL Intel GPU runtime packages, SYCL source-build arguments, SYCL launch environment, and Intel Arc runtime metric summaries.
+- Made `LocalAppService` resilient to bounded unexpected listener errors while keeping request-handler tasks observed during shutdown.

@@ -1,13 +1,13 @@
 # Release Hardening Audit
 
-Audit date: 2026-05-26
+Audit date: 2026-05-27
 
 ## Executive Summary
 
-Overall release posture: **v1.0.0 is published as an unsigned community
-release with explicit SmartScreen and SHA-256 verification notes. Trusted
-code-signing and broader clean-machine/hardware validation remain follow-up
-hardening work, not hidden blockers for the current public release.**
+Overall release posture: **v1.1.0 is ready as an unsigned community release
+with explicit SmartScreen and SHA-256 verification notes. Trusted code-signing
+and broader clean-machine/hardware validation remain follow-up hardening work,
+not hidden blockers for the current public release.**
 
 The core release blockers from the full audit have been addressed in code:
 
@@ -25,8 +25,16 @@ The core release blockers from the full audit have been addressed in code:
 - Release publish omits PDB files and supports certificate signing with `-CertificateThumbprint` and `-RequireSigned`.
 - App update checks are staged through the workspace cache and replace the portable exe only after the running process closes.
 - App update staging verifies a matching SHA-256 companion asset when present and requires same-certificate signature continuity when the installed app is already signed.
-- The WSL setup workflow now covers CPU, CUDA, and Vulkan prerequisites before source builds start.
+- Runtime onboarding is prebuilt-first: official llama.cpp release packages can
+  be installed directly before using source builds.
+- The Windows and WSL setup workflows now cover CPU, CUDA, Vulkan, and Intel
+  Arc SYCL prerequisites before advanced source builds start.
 - Per-model launch settings now include vision image token allowances and map them to llama.cpp server flags.
+- Per-model ports and loaded model sessions allow more than one model endpoint
+  to stay available when hardware capacity allows it.
+- The local app service now keeps request handlers observed and tolerates
+  bounded transient listener errors instead of silently faulting the listener
+  loop.
 
 ## Remaining External Hardening Work
 
@@ -48,7 +56,7 @@ The core release blockers from the full audit have been addressed in code:
 
 - Severity: Medium
 - Area: Distribution
-- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.0.0 asset naming are confirmed.
+- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.1.0 asset naming are confirmed.
 - Required result: Latest GitHub release contains `LlamaCppConsole-win-x64.zip`, matching SHA-256 companion assets, and release notes suitable for the completion popup.
 
 ### WSL and hardware matrix
@@ -56,15 +64,19 @@ The core release blockers from the full audit have been addressed in code:
 - Severity: Medium
 - Area: llama.cpp runtime/build support
 - Status: Requires manual hardware coverage
-- Required result: Validate missing WSL, missing distro, CPU build, missing Git/CMake/compiler, CUDA-visible WSL, Vulkan-visible WSL, and unsupported backend paths.
-- Added support: The app can detect installed non-Docker distros and guide WSL install/update, Ubuntu install/update, CPU tools, CUDA Toolkit, and Vulkan tool setup from the WSL Linux page.
+- Required result: Validate missing WSL, missing distro, CPU build, missing Git/CMake/compiler, CUDA-visible WSL, Vulkan-visible WSL, Intel Arc/SYCL-visible Windows and WSL, and unsupported backend paths.
+- Added support: The app can detect installed non-Docker distros and guide WSL install/update, Ubuntu install/update, CPU tools, CUDA Toolkit, Vulkan tool setup, Intel GPU runtime setup, and Intel oneAPI setup from the WSL Linux page. The Windows page detects native CPU/CUDA/Vulkan/SYCL tool readiness.
 
-### Runtime/archive checksum verification
+### Runtime/archive authenticity verification
 
 - Severity: Medium
 - Area: Third-party binaries
-- Status: Not implemented for future runtime archive downloads
-- Required result: Any downloaded third-party runtime archive must be checksum or signature verified before registration.
+- Status: Official prebuilt runtime downloads are installed from upstream GitHub
+  release assets and locally fingerprinted for source/prebuilt equivalence.
+  Upstream package authenticity still depends on GitHub transport/release trust
+  unless matching trusted upstream checksums or signatures become available.
+- Required result: Prefer trusted upstream checksums or signatures for runtime
+  archives when upstream publishes them.
 
 ## Automated Checks
 
@@ -77,7 +89,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.p
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
 ```
 
-The latest local smoke test launched a published `LlamaCppConsole.exe`, confirmed the window title `llama.cpp Console v1.0`, and verified the local health endpoint.
+The latest local smoke test launched a published `LlamaCppConsole.exe`, confirmed the window title `llama.cpp Console v1.1`, and verified the local health endpoint.
 
 ## Edge Cases To Keep Testing
 
@@ -86,7 +98,7 @@ The latest local smoke test launched a published `LlamaCppConsole.exe`, confirme
 - Interrupted app shutdown during model download or llama.cpp build.
 - Disk full during download, build, extract, or SQLite write.
 - Missing WSL, missing configured Ubuntu distro, or WSL disabled.
-- Git, CMake, compiler, CUDA, or Vulkan missing inside Ubuntu.
+- Git, CMake, compiler, CUDA, Vulkan, or Intel oneAPI/SYCL missing inside Ubuntu.
 - Permission denied for workspace, models, runtime, or cache folders.
 - Invalid, partial, renamed, or moved GGUF model files.
 - Missing or deleted llama-server executable after registration.
@@ -96,6 +108,6 @@ The latest local smoke test launched a published `LlamaCppConsole.exe`, confirme
 
 ## Release Decision
 
-v1.0.0 is acceptable as a clearly unsigned public community release. A future
+v1.1.0 is acceptable as a clearly unsigned public community release. A future
 trusted/stable Windows distribution should add Authenticode signing, broader
 clean-machine smoke testing, and wider hardware matrix validation.

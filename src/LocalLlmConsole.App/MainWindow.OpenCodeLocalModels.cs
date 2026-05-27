@@ -56,10 +56,14 @@ public partial class MainWindow
 
     private async Task<AppSettings> OpenCodeLocalModelLaunchSettingsAsync(ModelRecord model)
     {
+        var loaded = _sessions.SessionForModel(model.Id);
+        if (loaded is { IsRunning: true })
+            return await EnsureModelApiKeyAsync(loaded.LaunchSettings);
+
         var launchSettings = _settings;
         if (_stateStore is not null)
         {
-            var profile = await _stateStore.GetModelLaunchSettingsAsync(model.Id);
+            var profile = await EnsureModelLaunchProfileAsync(model);
             if (profile is not null)
                 launchSettings = profile.ApplyTo(_settings);
         }

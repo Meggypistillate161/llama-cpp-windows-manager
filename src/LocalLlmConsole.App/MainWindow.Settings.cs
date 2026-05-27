@@ -48,7 +48,7 @@ public partial class MainWindow
             var mode = AppPreferenceService.ThemeMode(ComboValue(_themeCombo));
             _settings = _settings with { ThemeMode = mode };
             ApplyTheme(mode);
-            if (_viewModel.CurrentPage == "Settings") ShowSettings();
+            SetStatus("Theme preview applied. Save settings to keep it.");
         };
         themeBar.Children.Add(_themeCombo);
         Grid.SetColumn(themeBar, 2);

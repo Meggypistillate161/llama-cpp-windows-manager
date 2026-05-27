@@ -11,8 +11,10 @@ public sealed class LocalAppService : IAsyncDisposable
     private readonly StateStore _stateStore;
     private readonly JobEngine _jobs;
     private Task? _loop;
+    private int _listenerErrorCount;
 
     public Uri BaseUri { get; }
+    public string LastListenerError { get; private set; } = "";
 
     public LocalAppService(StateStore stateStore, JobEngine jobs, int port)
     {
@@ -42,7 +44,16 @@ public sealed class LocalAppService : IAsyncDisposable
             {
                 return;
             }
+            catch (Exception ex) when (!_stop.IsCancellationRequested && _listener.IsListening)
+            {
+                LastListenerError = $"Local app service listener error: {ex.Message}";
+                if (++_listenerErrorCount >= 3)
+                    return;
+                await Task.Delay(250, cancellationToken);
+                continue;
+            }
             QueueRequest(context, cancellationToken);
+            _listenerErrorCount = 0;
         }
     }
 

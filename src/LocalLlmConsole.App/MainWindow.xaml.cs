@@ -141,13 +141,13 @@ public partial class MainWindow : Window
             if (_shutdownRequested) return;
             _shutdownRequested = true;
 
-            if (_llama.IsRunning)
+            if (_sessions.HasRunningSessions)
             {
-                var (modelName, runtimeName) = await ActiveRuntimeLabelsAsync();
+                var count = _sessions.Snapshots().Count(session => session.IsRunning);
                 var result = ThemedMessageBox.Show(
                     this,
-                    $"{modelName}\n{runtimeName}\n\nClosing the app will stop the running model and free its runtime resources.\n\nClose and stop the model?",
-                    "Model is running",
+                    $"{count} model session{(count == 1 ? " is" : "s are")} running.\n\nClosing the app will stop all loaded models and free their runtime resources.\n\nClose and stop loaded models?",
+                    "Models are running",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
                 if (result != MessageBoxResult.Yes)
@@ -174,8 +174,8 @@ public partial class MainWindow : Window
             }
 
             IsEnabled = false;
-            var closingStatus = _llama.IsRunning
-                ? "Stopping runtime and closing..."
+            var closingStatus = _sessions.HasRunningSessions
+                ? "Stopping runtimes and closing..."
                 : _huggingFace?.ActiveDownloadCount > 0
                     ? "Pausing active downloads and closing..."
                     : "Closing...";
@@ -204,7 +204,10 @@ public partial class MainWindow : Window
         if (_huggingFace is not null) await _huggingFace.PauseActiveDownloadsAsync(TimeSpan.FromSeconds(10));
         _processRunner.KillTrackedProcesses();
         await CleanupActiveWslBuildsAsync();
-        _llama.Dispose();
+        await _sessions.StopAllAsync();
+        _sessions.Dispose();
+        _runtimePackageClient.Dispose();
+        _metricsClient.Dispose();
         _activeRuntimeSettings = null;
         ClearActiveRuntimeSession();
         if (_service is not null)

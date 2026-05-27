@@ -174,7 +174,7 @@ public static class RuntimeAdapter
         };
         if (!string.IsNullOrWhiteSpace(request.ApiKey))
             args.AddRange(["--api-key", request.ApiKey.Trim()]);
-        if (request.Backend is RuntimeBackend.Cuda or RuntimeBackend.Vulkan)
+        if (request.Backend is RuntimeBackend.Cuda or RuntimeBackend.Vulkan or RuntimeBackend.Metal or RuntimeBackend.Sycl)
             args.AddRange(["--n-gpu-layers", request.GpuLayers.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
         args.AddRange([
             "--parallel", request.ParallelSlots.ToString(System.Globalization.CultureInfo.InvariantCulture),

@@ -40,7 +40,7 @@ public sealed class RuntimeRegistryService
             : FindLlamaServer(full) ?? throw new InvalidOperationException("No llama-server or llama-server.exe was found in that folder or its bin folder.");
         var packaged = ReadPackagedMetadata(full);
         var backend = InferBackend(full, executable, packaged);
-        var managedPresetId = InferManagedPresetId(full, backend, packaged);
+        var managedPresetId = InferManagedPresetId(full, executable, backend, packaged);
         var metadataRuntime = packaged?["runtime"]?.ToString();
         var mode = string.Equals(metadataRuntime, "native", StringComparison.OrdinalIgnoreCase)
             ? RuntimeMode.Native
@@ -86,8 +86,10 @@ public sealed class RuntimeRegistryService
     private static RuntimeBackend InferBackend(string folder, string executablePath, JsonObject? metadata)
     {
         var text = $"{RuntimeMetadataText(metadata)} {folder} {executablePath}";
+        if (text.Contains("sycl", StringComparison.OrdinalIgnoreCase)) return RuntimeBackend.Sycl;
         if (text.Contains("cuda", StringComparison.OrdinalIgnoreCase)) return RuntimeBackend.Cuda;
         if (text.Contains("vulkan", StringComparison.OrdinalIgnoreCase)) return RuntimeBackend.Vulkan;
+        if (HasNearbySyclMarker(folder)) return RuntimeBackend.Sycl;
         return HasNearbyCudaMarker(folder)
             ? RuntimeBackend.Cuda
             : RuntimeBackend.Cpu;
@@ -102,7 +104,10 @@ public sealed class RuntimeRegistryService
             metadata["backend"]?.ToString() ?? "",
             metadata["name"]?.ToString() ?? "",
             metadata["repoUrl"]?.ToString() ?? "",
-            metadata["sourcePath"]?.ToString() ?? ""
+            metadata["sourcePath"]?.ToString() ?? "",
+            metadata["source"]?.ToString() ?? "",
+            metadata["releaseTag"]?.ToString() ?? "",
+            metadata["managedPackageId"]?.ToString() ?? ""
         };
         if (metadata["tags"] is JsonArray tags)
         {
@@ -111,7 +116,7 @@ public sealed class RuntimeRegistryService
         return string.Join(" ", values);
     }
 
-    private static string InferManagedPresetId(string folder, RuntimeBackend backend, JsonObject? metadata)
+    private static string InferManagedPresetId(string folder, string executablePath, RuntimeBackend backend, JsonObject? metadata)
     {
         var explicitId = metadata?["managedPresetId"]?.ToString();
         if (!string.IsNullOrWhiteSpace(explicitId)) return explicitId;
@@ -130,9 +135,12 @@ public sealed class RuntimeRegistryService
             || text.Contains("ggerganov/llama.cpp", StringComparison.OrdinalIgnoreCase)
             || text.Contains("llama.cpp", StringComparison.OrdinalIgnoreCase))
         {
-            if (backend == RuntimeBackend.Cuda) return "official-cuda";
-            if (backend == RuntimeBackend.Vulkan) return "official-vulkan";
-            return "official-cpu";
+            var isNative = string.Equals(metadata?["runtime"]?.ToString(), "native", StringComparison.OrdinalIgnoreCase)
+                || executablePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+            if (backend == RuntimeBackend.Sycl) return isNative ? "official-windows-sycl" : "official-sycl";
+            if (backend == RuntimeBackend.Cuda) return isNative ? "official-windows-cuda" : "official-cuda";
+            if (backend == RuntimeBackend.Vulkan) return isNative ? "official-windows-vulkan" : "official-vulkan";
+            return isNative ? "official-windows-cpu" : "official-cpu";
         }
 
         return "";
@@ -196,6 +204,18 @@ public sealed class RuntimeRegistryService
         {
             if (!Directory.Exists(candidate)) continue;
             if (Directory.EnumerateFiles(candidate, "*cuda*", SearchOption.TopDirectoryOnly).Any())
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasNearbySyclMarker(string folder)
+    {
+        foreach (var candidate in new[] { folder, Path.Combine(folder, "bin"), Path.Combine(folder, "lib") })
+        {
+            if (!Directory.Exists(candidate)) continue;
+            if (Directory.EnumerateFiles(candidate, "*sycl*", SearchOption.TopDirectoryOnly).Any())
                 return true;
         }
 

@@ -23,6 +23,8 @@ public partial class MainWindow
         var runtimeGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         runtimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(98) });
         runtimeGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        runtimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        runtimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(88) });
         runtimeGrid.Children.Add(new TextBlock
         {
             Text = "Runtime",
@@ -48,6 +50,23 @@ public partial class MainWindow
         };
         Grid.SetColumn(_runtimeCombo, 1);
         runtimeGrid.Children.Add(_runtimeCombo);
+
+        var portLabel = new TextBlock
+        {
+            Text = "Port",
+            Foreground = (System.Windows.Media.Brush)WpfApplication.Current.Resources["TextMuted"],
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 7, 2),
+            ToolTip = TooltipText("Fixed server port for this model. OpenCode uses this endpoint before the model is loaded.")
+        };
+        Grid.SetColumn(portLabel, 2);
+        runtimeGrid.Children.Add(portLabel);
+        _launchPortBox = LaunchTextBox(_settings.Port);
+        _launchPortBox.MinWidth = 78;
+        _launchPortBox.ToolTip = TooltipText("Fixed server port for this model. Use a unique port per model when serving multiple models.");
+        Grid.SetColumn(_launchPortBox, 3);
+        runtimeGrid.Children.Add(_launchPortBox);
         panel.Children.Add(runtimeGrid);
 
         _modelCapabilityText = Text("No model selected", 12, false, true);

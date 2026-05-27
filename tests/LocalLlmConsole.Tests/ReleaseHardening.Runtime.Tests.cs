@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -155,6 +155,40 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("--port", args);
         Assert.Contains("8081", args);
         Assert.Contains("--api-key", args);
+    }
+
+
+    [Fact]
+    public void RuntimeAdapterTreatsSyclAsGpuBackend()
+    {
+        var onArgs = RuntimeAdapter.BuildArgs(ValidLaunchRequest() with
+        {
+            Backend = RuntimeBackend.Sycl,
+            GpuLayers = 99,
+            MmapMode = "on"
+        });
+        var offArgs = RuntimeAdapter.BuildArgs(ValidLaunchRequest() with
+        {
+            Backend = RuntimeBackend.Sycl,
+            GpuLayers = 88,
+            MmapMode = "off"
+        });
+
+        Assert.Contains("--n-gpu-layers", onArgs);
+        Assert.Contains("99", onArgs);
+        Assert.Contains("--mmap", onArgs);
+        Assert.Contains("--n-gpu-layers", offArgs);
+        Assert.Contains("88", offArgs);
+        Assert.Contains("--no-mmap", offArgs);
+    }
+
+
+    [Fact]
+    public void RuntimeAdapterTreatsMetalAsGpuBackend()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "RuntimeAdapter.cs"));
+
+        Assert.Contains("request.Backend is RuntimeBackend.Cuda or RuntimeBackend.Vulkan or RuntimeBackend.Metal or RuntimeBackend.Sycl", source, StringComparison.Ordinal);
     }
 
 
@@ -387,6 +421,95 @@ public sealed partial class ReleaseHardeningTests
 
 
     [Fact]
+    public void RuntimeLifetimeCounterTrackerTracksRuntimeKeysAndUsesSlotFallback()
+    {
+        var tracker = new RuntimeLifetimeCounterTracker();
+        var firstKey = "model-a|runtime-a|8081";
+        var secondKey = "model-b|runtime-b|8082";
+
+        Assert.False(tracker.Observe(firstKey, "model-a", "Model A", generatedCounter: 10, promptCounter: 5, slotSnapshot: null).HasTokens);
+        var firstDelta = tracker.Observe(firstKey, "model-a", "Model A", generatedCounter: 14, promptCounter: 9, slotSnapshot: null);
+
+        Assert.Equal("model-a", firstDelta.ModelId);
+        Assert.Equal(4, firstDelta.GeneratedTokens);
+        Assert.Equal(4, firstDelta.PromptTokens);
+
+        Assert.False(tracker.Observe(secondKey, "model-b", "Model B", generatedCounter: null, promptCounter: null, new RuntimeSlotSnapshot(20, 50, false, null, null, null)).HasTokens);
+        var secondDelta = tracker.Observe(secondKey, "model-b", "Model B", generatedCounter: null, promptCounter: null, new RuntimeSlotSnapshot(26, 63, false, null, null, null));
+
+        Assert.Equal("model-b", secondDelta.ModelId);
+        Assert.Equal(13, secondDelta.GeneratedTokens);
+        Assert.Equal(6, secondDelta.PromptTokens);
+
+        tracker.RetainRuntimeKeys([secondKey]);
+        Assert.Equal(1, tracker.Count);
+        Assert.False(tracker.Observe(firstKey, "model-a", "Model A", generatedCounter: 100, promptCounter: 100, slotSnapshot: null).HasTokens);
+    }
+
+
+    [Fact]
+    public void RuntimeIdleUnloadTrackerTracksEachRuntimeKeyIndependently()
+    {
+        var tracker = new RuntimeIdleUnloadTracker();
+        var now = DateTimeOffset.Parse("2026-05-27T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var firstKey = "model-a|runtime-a|8081";
+        var secondKey = "model-b|runtime-b|8082";
+
+        Assert.False(tracker.Observe(firstKey, new RuntimeSlotSnapshot(0, 0, false, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now));
+        Assert.False(tracker.Observe(secondKey, new RuntimeSlotSnapshot(0, 0, false, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now));
+
+        Assert.True(tracker.Observe(firstKey, new RuntimeSlotSnapshot(0, 0, false, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now.AddSeconds(61)));
+        Assert.False(tracker.Observe(secondKey, new RuntimeSlotSnapshot(0, 0, true, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now.AddSeconds(61)));
+        Assert.False(tracker.Observe(secondKey, new RuntimeSlotSnapshot(0, 0, false, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now.AddSeconds(90)));
+        Assert.True(tracker.Observe(secondKey, new RuntimeSlotSnapshot(0, 0, false, null, null, null), generatedCounter: null, promptCounter: null, idleMinutes: 1, now.AddSeconds(122)));
+
+        tracker.RetainRuntimeKeys([secondKey]);
+        Assert.Equal(1, tracker.Count);
+        tracker.Reset(secondKey);
+        Assert.Equal(0, tracker.Count);
+    }
+
+
+    [Fact]
+    public void RuntimeDashboardPollsAllLoadedSessionsForLifetimeMetricsBeforeRenderingSelection()
+    {
+        var dashboard = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.RuntimeDashboard.cs"));
+        var counters = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.RuntimeMetricCounters.cs"));
+        var metrics = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.RuntimeMetrics.cs"));
+
+        Assert.Contains("PollRuntimeMetricsForSessionsAsync(_sessions.Snapshots()", dashboard, StringComparison.Ordinal);
+        Assert.Contains("Where(session => session is { IsRunning: true, Status: LoadedModelSessionStatus.Running or LoadedModelSessionStatus.Warm })", dashboard, StringComparison.Ordinal);
+        Assert.Contains("await TrackLifetimeTokenDeltasAsync(pollResults)", dashboard, StringComparison.Ordinal);
+        Assert.True(
+            dashboard.IndexOf("await TrackLifetimeTokenDeltasAsync(pollResults)", StringComparison.Ordinal)
+            < dashboard.IndexOf("if (selectedOverviewModel is not null && _sessions.SessionForModel", StringComparison.Ordinal));
+        Assert.DoesNotContain("ResetLifetimeCounters();", dashboard, StringComparison.Ordinal);
+        var lifetimeStart = counters.IndexOf("private async Task TrackLifetimeTokenDeltasAsync", StringComparison.Ordinal);
+        var lifetimeEnd = counters.IndexOf("private void ResetLifetimeCounters()", lifetimeStart, StringComparison.Ordinal);
+        Assert.DoesNotContain("_llama.ActiveModelId", counters[lifetimeStart..lifetimeEnd], StringComparison.Ordinal);
+        Assert.Contains("RuntimeGeneratedTokenCounter(result.Samples)", counters, StringComparison.Ordinal);
+        Assert.Contains("RuntimePromptTokenCounter(result.Samples)", counters, StringComparison.Ordinal);
+        Assert.Contains("result.SlotSnapshot", counters, StringComparison.Ordinal);
+        Assert.Contains("RuntimeMetricKey(LoadedModelSessionSnapshot session)", metrics, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
+    public void RuntimeDashboardAppliesIdleUnloadPolicyToAllLoadedSessions()
+    {
+        var dashboard = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.RuntimeDashboard.cs"));
+        var counters = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.RuntimeMetricCounters.cs"));
+
+        Assert.Contains("await ApplyIdleUnloadPoliciesAsync(pollResults)", dashboard, StringComparison.Ordinal);
+        Assert.Contains("_idleUnloadTracker.RetainRuntimeKeys(pollResults.Select(result => result.RuntimeKey))", counters, StringComparison.Ordinal);
+        Assert.Contains("_idleUnloadTracker.Observe(result.RuntimeKey", counters, StringComparison.Ordinal);
+        Assert.Contains("await StopModelRuntimeAsync(model)", counters, StringComparison.Ordinal);
+        Assert.DoesNotContain("StopLoadedRuntimeAsync()", counters, StringComparison.Ordinal);
+        Assert.DoesNotContain("_llama.ActiveModelId", counters, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
     public void DisplayFormatServiceFormatsMetricsBytesElapsedAndLongText()
     {
         Assert.Equal("0s", DisplayFormatService.Elapsed(TimeSpan.FromSeconds(-1)));
@@ -408,6 +531,16 @@ public sealed partial class ReleaseHardeningTests
         var formatted = GpuStatusService.FormatNvidiaSmiCsvLine("0, NVIDIA RTX, 76, 62, 12288, 24576");
 
         Assert.Equal("GPU 0: 76% | 62C | 12.0/24.0 GiB", formatted);
+    }
+
+
+    [Fact]
+    public void GpuStatusServiceFormatsIntelArcSyclLine()
+    {
+        var formatted = GpuStatusService.FormatIntelArcStatus("[level_zero:gpu][level_zero:0] Intel(R) Arc(TM) A770 Graphics");
+
+        Assert.Equal("Intel(R) Arc(TM) A770 Graphics", formatted);
+        Assert.Equal("Intel Arc GPU", GpuStatusService.FormatIntelArcStatus(""));
     }
 
 
@@ -500,6 +633,9 @@ public sealed partial class ReleaseHardeningTests
 
         Assert.Equal("official-cuda", RuntimeMetadataService.ManagedPresetId(runtime));
         Assert.Equal("official-vulkan", RuntimeMetadataService.ManagedPresetId(runtime with { Name = "llama.cpp Vulkan", Backend = RuntimeBackend.Vulkan }));
+        Assert.Equal("official-sycl", RuntimeMetadataService.ManagedPresetId(runtime with { Name = "llama.cpp SYCL", Backend = RuntimeBackend.Sycl }));
+        Assert.Equal("official-windows-cuda", RuntimeMetadataService.ManagedPresetId(runtime with { Mode = RuntimeMode.Native, ExecutablePath = Path.Combine(runtimeRoot, "llama-server.exe") }));
+        Assert.Equal("official-windows-sycl", RuntimeMetadataService.ManagedPresetId(runtime with { Mode = RuntimeMode.Native, Backend = RuntimeBackend.Sycl, ExecutablePath = Path.Combine(runtimeRoot, "llama-server.exe") }));
         Assert.Equal(Path.Combine(root, "runtime"), RuntimeMetadataService.Folder(runtime));
         Assert.Equal("abcdef1234567890", RuntimeMetadataService.Commit(runtime));
         Assert.True(RuntimeMetadataService.CommitsMatch("abcdef12", "abcdef1234567890"));
@@ -507,6 +643,257 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("commit unavailable", RuntimeMetadataService.DisplayCommit(""));
         Assert.Equal("fedcba9876543210", RuntimeMetadataService.TryReadGitHeadCommit(sourceDir));
         Assert.Equal("123456789abcdef", RuntimeMetadataService.InferCommitFromText("build-123456789abcdef-path"));
+    }
+
+
+    [Fact]
+    public void RuntimePackageCatalogServiceSelectsOfficialReleaseAssets()
+    {
+        var release = RuntimePackageCatalogService.ParseReleaseJson("""
+        {
+          "tag_name": "b9354",
+          "html_url": "https://github.com/ggml-org/llama.cpp/releases/tag/b9354",
+          "published_at": "2026-05-27T08:00:00Z",
+          "assets": [
+            { "name": "llama-b9354-bin-win-cuda-13.1-x64.zip", "browser_download_url": "https://example.com/cuda13.zip", "size": 13 },
+            { "name": "cudart-llama-bin-win-cuda-13.1-x64.zip", "browser_download_url": "https://example.com/cudart13.zip", "size": 3 },
+            { "name": "llama-b9354-bin-win-cuda-12.4-x64.zip", "browser_download_url": "https://example.com/cuda12.zip", "size": 12 },
+            { "name": "cudart-llama-bin-win-cuda-12.4-x64.zip", "browser_download_url": "https://example.com/cudart12.zip", "size": 2 },
+            { "name": "llama-b9354-bin-win-vulkan-x64.zip", "browser_download_url": "https://example.com/win-vulkan.zip", "size": 4 },
+            { "name": "llama-b9354-bin-win-sycl-x64.zip", "browser_download_url": "https://example.com/win-sycl.zip", "size": 9 },
+            { "name": "llama-b9354-bin-win-cpu-x64.zip", "browser_download_url": "https://example.com/win-cpu.zip", "size": 5 },
+            { "name": "llama-b9354-bin-ubuntu-cuda-12.4-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-cuda.tar.gz", "size": 8 },
+            { "name": "llama-b9354-bin-ubuntu-vulkan-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-vulkan.tar.gz", "size": 6 },
+            { "name": "llama-b9354-bin-ubuntu-sycl-f16-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-sycl.tar.gz", "size": 10 },
+            { "name": "llama-b9354-bin-ubuntu-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-cpu.tar.gz", "size": 7 }
+          ]
+        }
+        """);
+
+        var presets = RuntimePackageCatalogService.PresetRows();
+        var cuda = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-windows-cuda"), release);
+        var cudaWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-cuda"), release);
+        var vulkanWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-vulkan"), release);
+        var sycl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-windows-sycl"), release);
+        var syclWsl = RuntimePackageCatalogService.SelectAssets(presets.Single(preset => preset.Id == "official-prebuilt-sycl"), release);
+
+        Assert.Equal(
+            ["official-prebuilt-windows-cuda", "official-prebuilt-cuda", "official-prebuilt-windows-vulkan", "official-prebuilt-vulkan", "official-prebuilt-windows-sycl", "official-prebuilt-sycl", "official-prebuilt-windows-cpu", "official-prebuilt-cpu"],
+            presets.Select(preset => preset.Id).ToArray());
+        Assert.Equal("b9354", release.TagName);
+        Assert.Equal("llama-b9354-bin-win-cuda-12.4-x64.zip", cuda.PrimaryAsset.Name);
+        Assert.Equal("cudart-llama-bin-win-cuda-12.4-x64.zip", Assert.Single(cuda.AdditionalAssets).Name);
+        Assert.Contains("cudart-llama-bin-win-cuda-12.4-x64.zip", cuda.AssetSummary, StringComparison.Ordinal);
+        Assert.Equal("llama-b9354-bin-ubuntu-cuda-12.4-x64.tar.gz", cudaWsl.PrimaryAsset.Name);
+        Assert.Equal("CUDA WSL", RuntimePackageCatalogService.BackendLabel(cudaWsl.Preset));
+        Assert.Equal("llama-b9354-bin-ubuntu-vulkan-x64.tar.gz", vulkanWsl.PrimaryAsset.Name);
+        Assert.Equal("Vulkan WSL", RuntimePackageCatalogService.BackendLabel(vulkanWsl.Preset));
+        Assert.Equal("llama-b9354-bin-win-sycl-x64.zip", sycl.PrimaryAsset.Name);
+        Assert.Equal("SYCL Windows", RuntimePackageCatalogService.BackendLabel(sycl.Preset));
+        Assert.Equal("llama-b9354-bin-ubuntu-sycl-f16-x64.tar.gz", syclWsl.PrimaryAsset.Name);
+        Assert.Equal("SYCL WSL", RuntimePackageCatalogService.BackendLabel(syclWsl.Preset));
+        Assert.EndsWith(Path.Combine("official-prebuilt-windows-cuda-b9354"), RuntimePackageCatalogService.InstallDir(Path.Combine("D:", "runtimes"), cuda), StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    [Fact]
+    public void RuntimePackageCatalogServiceReportsCudaWslUnavailableWhenReleaseOmitsAsset()
+    {
+        var release = RuntimePackageCatalogService.ParseReleaseJson("""
+        {
+          "tag_name": "b9357",
+          "html_url": "https://github.com/ggml-org/llama.cpp/releases/tag/b9357",
+          "target_commitish": "abcdef1234567890",
+          "assets": [
+            { "name": "llama-b9357-bin-ubuntu-vulkan-x64.tar.gz", "browser_download_url": "https://example.com/ubuntu-vulkan.tar.gz", "size": 6 }
+          ]
+        }
+        """);
+        var preset = RuntimePackageCatalogService.PresetRows().Single(candidate => candidate.Id == "official-prebuilt-cuda");
+        var unavailable = new RuntimePackageUpdateState(false, "", release.TagName, release.HtmlUrl, "not available", DateTimeOffset.UtcNow, TargetCommit: release.TargetCommit, IsAvailable: false);
+
+        var ex = Assert.Throws<RuntimePackageAssetUnavailableException>(() => RuntimePackageCatalogService.SelectAssets(preset, release));
+
+        Assert.Contains("CUDA WSL", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Not published", RuntimePackageCatalogService.LocalStatusLabel([], [], unavailable));
+        Assert.False(RuntimePackageCatalogService.CanInstallPackage([], [], unavailable));
+    }
+
+
+    [Fact]
+    public void RuntimePackageCatalogServiceExtractsAndFindsRuntimeExecutable()
+    {
+        var root = CreateTempRoot();
+        var source = Path.Combine(root, "source");
+        var nested = Path.Combine(source, "llama-b9354-bin-win-cpu-x64", "bin");
+        var archive = Path.Combine(root, "runtime.zip");
+        var destination = Path.Combine(root, "runtime");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, "llama-server.exe"), "fake");
+        System.IO.Compression.ZipFile.CreateFromDirectory(source, archive);
+
+        RuntimePackageCatalogService.ExtractArchive(archive, destination);
+
+        var executable = RuntimePackageCatalogService.FindRuntimeExecutable(destination, RuntimeMode.Native);
+        Assert.Equal(Path.Combine(destination, "bin", "llama-server.exe"), executable);
+        Assert.Equal(destination, RuntimePackageCatalogService.RuntimeFolderFromExecutable(executable));
+    }
+
+
+    [Fact]
+    public void RuntimePackageCatalogServiceExtractsCompanionArchivesBesidePrimaryRuntime()
+    {
+        var root = CreateTempRoot();
+        var primarySource = Path.Combine(root, "primary-source");
+        var primaryNested = Path.Combine(primarySource, "llama-b9354-bin-win-cuda-x64", "bin");
+        var companionSource = Path.Combine(root, "companion-source");
+        var companionNested = Path.Combine(companionSource, "cudart-llama-bin-win-cuda-12.4-x64", "bin");
+        var primaryArchive = Path.Combine(root, "primary.zip");
+        var companionArchive = Path.Combine(root, "companion.zip");
+        var destination = Path.Combine(root, "runtime");
+        Directory.CreateDirectory(primaryNested);
+        Directory.CreateDirectory(companionNested);
+        File.WriteAllText(Path.Combine(primaryNested, "llama-server.exe"), "fake server");
+        File.WriteAllText(Path.Combine(companionNested, "cudart64_12.dll"), "fake cudart");
+        System.IO.Compression.ZipFile.CreateFromDirectory(primarySource, primaryArchive);
+        System.IO.Compression.ZipFile.CreateFromDirectory(companionSource, companionArchive);
+
+        RuntimePackageCatalogService.ExtractArchive(primaryArchive, destination);
+        RuntimePackageCatalogService.ExtractArchive(companionArchive, destination);
+
+        Assert.True(File.Exists(Path.Combine(destination, "bin", "llama-server.exe")));
+        Assert.True(File.Exists(Path.Combine(destination, "bin", "cudart64_12.dll")));
+        Assert.False(Directory.Exists(Path.Combine(destination, "cudart-llama-bin-win-cuda-12.4-x64")));
+    }
+
+
+    [Fact]
+    public void RuntimePackageMetadataIdentifiesInstalledPrebuiltRuntime()
+    {
+        var root = CreateTempRoot();
+        var runtimeFolder = Path.Combine(root, "official-prebuilt-windows-cuda-b9354");
+        Directory.CreateDirectory(runtimeFolder);
+        var preset = RuntimePackageCatalogService.PresetRows().Single(candidate => candidate.Id == "official-prebuilt-windows-cuda");
+        var runtime = new RuntimeRecord(
+            "runtime-1",
+            "Official llama.cpp CUDA Windows",
+            RuntimeMode.Native,
+            RuntimeBackend.Cuda,
+            Path.Combine(runtimeFolder, "llama-server.exe"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                folder = runtimeFolder,
+                runtimeMetadata = new
+                {
+                    managedPackageId = preset.Id,
+                    managedPresetId = preset.Id,
+                    releaseTag = "b9354"
+                }
+            }),
+            DateTimeOffset.UtcNow);
+
+        var installed = RuntimePackageCatalogService.InstalledPackages([runtime], preset);
+
+        Assert.Equal(preset.Id, RuntimeMetadataService.ManagedPackageId(runtime));
+        Assert.Equal(preset.Id, RuntimeMetadataService.ManagedPresetId(runtime));
+        Assert.Equal("b9354", RuntimeMetadataService.PackageTag(runtime));
+        Assert.Single(installed);
+        Assert.Equal("b9354", RuntimePackageCatalogService.LatestInstalledTag(installed));
+        Assert.False(RuntimePackageCatalogService.CanInstallPackage(installed, null));
+        Assert.True(RuntimePackageCatalogService.CanInstallPackage(installed, new RuntimePackageUpdateState(true, "b9354", "b9355", "", "", DateTimeOffset.UtcNow)));
+    }
+
+
+    [Fact]
+    public async Task RuntimeEquivalenceServiceLinksSourceBuildAndPrebuiltByFingerprint()
+    {
+        var root = CreateTempRoot();
+        var packageFolder = Path.Combine(root, "runtimes", "official-prebuilt-windows-cuda-b9354");
+        var sourceFolder = Path.Combine(root, "runtimes", "official-windows-cuda-20260527");
+        Directory.CreateDirectory(Path.Combine(packageFolder, "bin"));
+        Directory.CreateDirectory(Path.Combine(sourceFolder, "bin"));
+        await File.WriteAllTextAsync(Path.Combine(packageFolder, "bin", "llama-server.exe"), "same binary", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(sourceFolder, "bin", "llama-server.exe"), "same binary", TestContext.Current.CancellationToken);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var now = DateTimeOffset.UtcNow;
+        var packageRuntime = new RuntimeRecord(
+            "package-runtime",
+            "Official llama.cpp CUDA Windows",
+            RuntimeMode.Native,
+            RuntimeBackend.Cuda,
+            Path.Combine(packageFolder, "bin", "llama-server.exe"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                folder = packageFolder,
+                runtimeMetadata = new
+                {
+                    managedPackageId = "official-prebuilt-windows-cuda",
+                    managedPresetId = "official-prebuilt-windows-cuda",
+                    releaseTag = "b9354"
+                }
+            }),
+            now);
+        var sourceRuntime = new RuntimeRecord(
+            "source-runtime",
+            "Official llama.cpp CUDA Windows Source",
+            RuntimeMode.Native,
+            RuntimeBackend.Cuda,
+            Path.Combine(sourceFolder, "bin", "llama-server.exe"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                folder = sourceFolder,
+                runtimeMetadata = new
+                {
+                    managedPresetId = "official-windows-cuda",
+                    commit = "9777256c3130"
+                }
+            }),
+            now);
+        await store.UpsertRuntimeAsync(packageRuntime);
+        await store.UpsertRuntimeAsync(sourceRuntime);
+
+        Assert.True(await RuntimeEquivalenceService.ReconcileOfficialRuntimeEquivalenceAsync(store, await store.ListRuntimesAsync(), TestContext.Current.CancellationToken));
+        var runtimes = await store.ListRuntimesAsync();
+        var reconciledSource = runtimes.Single(runtime => runtime.Id == sourceRuntime.Id);
+        var reconciledPackage = runtimes.Single(runtime => runtime.Id == packageRuntime.Id);
+        var preset = RuntimePackageCatalogService.PresetRows().Single(candidate => candidate.Id == "official-prebuilt-windows-cuda");
+
+        Assert.Equal(RuntimeMetadataService.RuntimeFingerprint(reconciledPackage), RuntimeMetadataService.RuntimeFingerprint(reconciledSource));
+        Assert.Contains(preset.Id, RuntimeMetadataService.EquivalentPackageIds(reconciledSource));
+        Assert.Contains(preset.SourcePresetId, RuntimeMetadataService.EquivalentSourcePresetIds(reconciledPackage));
+        Assert.Contains(reconciledSource, RuntimePackageCatalogService.InstalledPackages(runtimes, preset));
+    }
+
+
+    [Fact]
+    public void RuntimePackageCatalogServiceReportsSourceBuildCandidates()
+    {
+        var root = CreateTempRoot();
+        var runtime = new RuntimeRecord(
+            "source-runtime",
+            "Official llama.cpp CUDA Windows",
+            RuntimeMode.Native,
+            RuntimeBackend.Cuda,
+            Path.Combine(root, "runtime", "bin", "llama-server.exe"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                folder = Path.Combine(root, "runtime"),
+                runtimeMetadata = new
+                {
+                    managedPresetId = "official-windows-cuda",
+                    commit = "9777256c3130"
+                }
+            }),
+            DateTimeOffset.UtcNow);
+        var preset = RuntimePackageCatalogService.PresetRows().Single(candidate => candidate.Id == "official-prebuilt-windows-cuda");
+
+        var sourceBuilds = RuntimePackageCatalogService.MatchingSourceBuilds([runtime], preset);
+
+        Assert.Single(sourceBuilds);
+        Assert.Equal("Built from source", RuntimePackageCatalogService.LocalStatusLabel([], sourceBuilds));
+        Assert.Equal("source:9777256c3130", RuntimePackageCatalogService.LocalIdentity([], sourceBuilds));
+        Assert.Contains("source built", RuntimePackageCatalogService.LatestLocalLabel([], sourceBuilds, null), StringComparison.OrdinalIgnoreCase);
     }
 
 
@@ -532,12 +919,25 @@ public sealed partial class ReleaseHardeningTests
         var rows = RuntimeBuildCatalogService.PresetRows(runtimeRoot);
 
         Assert.True(loaded.Custom);
+        Assert.Equal(RuntimeMode.Wsl, RuntimeBuildCatalogService.BuildMode(loaded));
         Assert.StartsWith("custom-my-runtime-cuda-", loaded.Id, StringComparison.Ordinal);
+        Assert.Equal(
+            ["official-windows-cuda", "official-cuda", "official-windows-vulkan", "official-vulkan", "official-windows-sycl", "official-sycl"],
+            rows.Take(6).Select(preset => preset.Id).ToArray());
         Assert.Contains(rows, preset => preset.Id == "official-cuda");
         Assert.Contains(rows, preset => preset.Id == "official-vulkan" && RuntimeBuildCatalogService.BuildBackend(preset) == RuntimeBackend.Vulkan);
+        Assert.Contains(rows, preset => preset.Id == "official-sycl" && RuntimeBuildCatalogService.BuildBackend(preset) == RuntimeBackend.Sycl);
+        Assert.Contains(rows, preset => preset.Id == "official-windows-cpu" && RuntimeBuildCatalogService.BuildMode(preset) == RuntimeMode.Native);
+        Assert.Contains(rows, preset => preset.Id == "official-windows-cuda" && RuntimeBuildCatalogService.BuildMode(preset) == RuntimeMode.Native);
+        Assert.Contains(rows, preset => preset.Id == "official-windows-vulkan" && RuntimeBuildCatalogService.BuildBackend(preset) == RuntimeBackend.Vulkan && RuntimeBuildCatalogService.BuildMode(preset) == RuntimeMode.Native);
+        Assert.Contains(rows, preset => preset.Id == "official-windows-sycl" && RuntimeBuildCatalogService.BuildBackend(preset) == RuntimeBackend.Sycl && RuntimeBuildCatalogService.BuildMode(preset) == RuntimeMode.Native);
         Assert.Equal("Vulkan WSL", RuntimeBuildCatalogService.BackendLabel(rows.Single(preset => preset.Id == "official-vulkan")));
+        Assert.Equal("Vulkan Windows", RuntimeBuildCatalogService.BackendLabel(rows.Single(preset => preset.Id == "official-windows-vulkan")));
+        Assert.Equal("SYCL WSL", RuntimeBuildCatalogService.BackendLabel(rows.Single(preset => preset.Id == "official-sycl")));
+        Assert.Equal("SYCL Windows", RuntimeBuildCatalogService.BackendLabel(rows.Single(preset => preset.Id == "official-windows-sycl")));
         Assert.Contains(rows, preset => preset.Id == loaded.Id);
         Assert.Equal("abc123def4567890", RuntimeBuildCatalogService.SourceCommit(Assert.Single(sources)));
+        Assert.StartsWith("custom-my-runtime-windows-cuda-", RuntimeBuildCatalogService.CustomPresetId("My Runtime", "https://example.com/runtime.git", "main", "cuda", RuntimeMode.Native), StringComparison.Ordinal);
         Assert.True(RuntimeBuildCatalogService.IsAllowedGitSource("https://example.com/repo.git"));
         Assert.True(RuntimeBuildCatalogService.IsAllowedGitSource("ssh://git@example.com/repo.git"));
         Assert.True(RuntimeBuildCatalogService.IsAllowedGitSource(Path.GetTempPath()));
@@ -552,6 +952,27 @@ public sealed partial class ReleaseHardeningTests
         Assert.False(RuntimeBuildCatalogService.IsSafeGitRefName("bad branch"));
         Assert.Equal(["refs/heads/main", "main"], RuntimeBuildCatalogService.RemoteRefs(loaded));
         Assert.Equal("abcdef123", RuntimeBuildCatalogService.FirstLsRemoteCommit("abcdef123\trefs/heads/main\n"));
+        Assert.StartsWith("custom-my-runtime-windows-sycl-", RuntimeBuildCatalogService.CustomPresetId("My Runtime", "https://example.com/runtime.git", "main", "sycl", RuntimeMode.Native), StringComparison.Ordinal);
+
+        var legacySourcePath = Path.Combine(runtimeRoot, "runtime-sources", "legacy", "local-llm-runtime-source.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacySourcePath)!);
+        await File.WriteAllTextAsync(
+            legacySourcePath,
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                PresetId = "legacy",
+                Label = "Legacy",
+                RepoUrl = "https://example.com/legacy.git",
+                Branch = "main",
+                Cuda = false,
+                SourceDir = Path.GetDirectoryName(legacySourcePath),
+                Commit = "abc",
+                DownloadedAt = DateTimeOffset.UtcNow,
+                Backend = "cpu"
+            }),
+            TestContext.Current.CancellationToken);
+        var legacySource = RuntimeBuildCatalogService.Sources(runtimeRoot).Single(source => source.PresetId == "legacy");
+        Assert.Equal(RuntimeMode.Wsl, RuntimeBuildCatalogService.BuildMode(legacySource));
     }
 
 
@@ -595,7 +1016,8 @@ public sealed partial class ReleaseHardeningTests
         await File.WriteAllTextAsync(Path.Combine(installDir, "local-llm-runtime.json"), """{"commit":"abc"}""", TestContext.Current.CancellationToken);
         var preset = new RuntimeBuildPreset("custom-cuda", "Custom CUDA", "https://fixture-user:fixture-pass@example.invalid/repo.git", "main", true, Custom: true);
 
-        var payload = System.Text.Json.Nodes.JsonNode.Parse(RuntimeBuildJobService.Payload(preset, "build", installDir, "Queued.", "marker", "Ubuntu"))!.AsObject();
+        var sourceDir = Path.Combine(root, "source");
+        var payload = System.Text.Json.Nodes.JsonNode.Parse(RuntimeBuildJobService.Payload(preset, "build", installDir, "Queued.", "marker", "Ubuntu", sourceDir))!.AsObject();
         await RuntimeBuildJobService.StampManagedMetadataAsync(installDir, preset, update: true);
         var logPath = Path.Combine(root, "runtime-build.log");
         await RuntimeBuildJobService.AppendJobLogAsync(logPath, JobStatus.Running, "build started", BoundedLogFile.MegabytesToBytes(1));
@@ -609,9 +1031,12 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("build", payload["action"]?.ToString());
         Assert.Equal("Ubuntu", payload["wslDistro"]?.ToString());
         Assert.Equal("marker", payload["processMarker"]?.ToString());
+        Assert.Equal(sourceDir, payload["sourceDir"]?.ToString());
+        Assert.Equal("wsl", payload["mode"]?.ToString());
         Assert.Equal("https://redacted:redacted@example.invalid/repo.git", RuntimeBuildJobService.RedactCommandArgument(preset.RepoUrl));
         Assert.Equal("abc", metadata["commit"]?.ToString());
         Assert.Equal("custom-cuda", metadata["managedPresetId"]?.ToString());
+        Assert.Equal("wsl", metadata["managedMode"]?.ToString());
         Assert.Equal("update", metadata["managedAction"]?.ToString());
         Assert.False(string.IsNullOrWhiteSpace(metadata["managedInstalledAt"]?.ToString()));
         Assert.Contains("Running: build started", log, StringComparison.Ordinal);
@@ -643,7 +1068,8 @@ public sealed partial class ReleaseHardeningTests
     {
         var root = CreateTempRoot();
         var preset = new RuntimeBuildPreset("official-cuda", "Official CUDA", "https://example.com/llama.cpp.git", "master", true);
-        var payloadJson = RuntimeBuildJobService.Payload(preset, "build", Path.Combine(root, "runtime"), "Building", "marker", "Ubuntu-24.04");
+        var sourceDir = Path.Combine(root, "runtime-source");
+        var payloadJson = RuntimeBuildJobService.Payload(preset, "build", Path.Combine(root, "runtime"), "Building", "marker", "Ubuntu-24.04", sourceDir);
         var now = DateTimeOffset.UtcNow;
         var running = new JobRecord("job-1", "runtime-build", JobStatus.Running, payloadJson, Path.Combine(root, "logs", "job-1.log"), now, now);
         var failed = running with { Id = "job-2", Status = JobStatus.Failed };
@@ -663,6 +1089,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("build", payload.Action);
         Assert.Equal("marker", payload.ProcessMarker);
         Assert.Equal("Ubuntu-24.04", payload.WslDistro);
+        Assert.Equal(sourceDir, payload.SourceDir);
+        Assert.Equal(RuntimeMode.Wsl, payload.Mode);
         Assert.True(RuntimeBuildJobService.CanCancel(running));
         Assert.False(RuntimeBuildJobService.CanRetry(running));
         Assert.False(RuntimeBuildJobService.CanClear(running));
@@ -689,6 +1117,18 @@ public sealed partial class ReleaseHardeningTests
 
 
     [Fact]
+    public void RuntimeBuildRetryPreservesDownloadedSourceContext()
+    {
+        var source = ReadMainWindowSources();
+
+        Assert.Contains("RuntimeSourceFromBuildPayload(payload)", source, StringComparison.Ordinal);
+        Assert.Contains("payload.SourceDir", source, StringComparison.Ordinal);
+        Assert.Contains("var payloadSourceDir = source?.SourceDir ?? \"\";", source, StringComparison.Ordinal);
+        Assert.Contains("RuntimeBuildJobService.Payload(preset, plan.Action, plan.InstallDir, plan.QueuedMessage, plan.ProcessMarker, _settings.WslDistro, payloadSourceDir)", source, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
     public void RuntimeBuildToolServiceBuildsHiddenPowerShellCommand()
     {
         var preset = new RuntimeBuildPreset("custom-cuda", "Custom CUDA", "https://example.com/repo.git", "feature/runtime", true, Custom: true);
@@ -700,9 +1140,12 @@ public sealed partial class ReleaseHardeningTests
             @"D:\cache\build",
             @"D:\runtimes\install",
             preset,
+            RuntimeMode.Wsl,
             "Ubuntu-24.04",
             "marker-1",
             @"C:\Windows\System32\wsl.exe",
+            "",
+            "",
             noUpdate: true);
         var args = psi.ArgumentList.ToArray();
 
@@ -729,14 +1172,63 @@ public sealed partial class ReleaseHardeningTests
             @"D:\cache\build",
             @"D:\runtimes\install",
             vulkanPreset,
+            RuntimeMode.Wsl,
             "Ubuntu-24.04",
             "marker-2",
             @"C:\Windows\System32\wsl.exe",
+            "",
+            "",
             noUpdate: false);
         var vulkanArgs = vulkanPsi.ArgumentList.ToArray();
 
         Assert.Contains("-Vulkan", vulkanArgs);
         Assert.DoesNotContain("-Cuda", vulkanArgs);
+
+        var syclPreset = new RuntimeBuildPreset("official-sycl", "Official SYCL", "https://example.com/repo.git", "master", false, Backend: "sycl");
+        var syclPsi = RuntimeBuildToolService.CreateBuildProcessStartInfo(
+            "powershell.exe",
+            @"D:\tools\Build-LlamaCppRuntime.ps1",
+            @"D:\cache\source",
+            @"D:\cache\build",
+            @"D:\runtimes\install",
+            syclPreset,
+            RuntimeMode.Wsl,
+            "Ubuntu-24.04",
+            "marker-3",
+            @"C:\Windows\System32\wsl.exe",
+            "",
+            "",
+            noUpdate: false);
+        var syclArgs = syclPsi.ArgumentList.ToArray();
+
+        Assert.Contains("-Sycl", syclArgs);
+        Assert.DoesNotContain("-Cuda", syclArgs);
+        Assert.DoesNotContain("-Vulkan", syclArgs);
+
+        var nativePreset = new RuntimeBuildPreset("official-windows-cpu", "Official CPU Windows", "https://example.com/repo.git", "master", false, Mode: RuntimeMode.Native);
+        var nativePsi = RuntimeBuildToolService.CreateBuildProcessStartInfo(
+            "powershell.exe",
+            @"D:\tools\Build-LlamaCppRuntime.ps1",
+            @"D:\cache\source",
+            @"D:\cache\build",
+            @"D:\runtimes\install",
+            nativePreset,
+            RuntimeMode.Native,
+            "",
+            "",
+            "",
+            @"C:\Program Files\Git\cmd\git.exe",
+            @"C:\Program Files\CMake\bin\cmake.exe",
+            noUpdate: false);
+        var nativeArgs = nativePsi.ArgumentList.ToArray();
+
+        Assert.Contains("-Runtime", nativeArgs);
+        Assert.Contains("native", nativeArgs);
+        Assert.Contains("-GitExe", nativeArgs);
+        Assert.Contains(@"C:\Program Files\Git\cmd\git.exe", nativeArgs);
+        Assert.Contains("-CMakeExe", nativeArgs);
+        Assert.DoesNotContain("-WslDistro", nativeArgs);
+        Assert.DoesNotContain("-WslExe", nativeArgs);
     }
 
 
@@ -758,6 +1250,178 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("runner-output", result.Output, StringComparison.Ordinal);
         Assert.Contains("runner-error", result.Error, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
+    public async Task RuntimePortAllocatorSkipsReservedAndOccupiedPorts()
+    {
+        var allocator = new RuntimePortAllocator();
+        var occupied = new HashSet<int> { 8082 };
+
+        var port = await allocator.AllocateAsync(
+            8081,
+            [8081],
+            candidate => Task.FromResult(occupied.Contains(candidate)));
+
+        Assert.Equal(8083, port);
+    }
+
+
+    [Fact]
+    public void ModelPortAllocatorUsesLowestFreePortAndReusesGaps()
+    {
+        Assert.Equal(8081, ModelPortAllocator.NextAvailable(8081, []));
+        Assert.Equal(8082, ModelPortAllocator.NextAvailable(8081, [8081]));
+        Assert.Equal(8082, ModelPortAllocator.NextAvailable(8081, [8081, 8083]));
+        Assert.Equal(8081, ModelPortAllocator.NextAvailable(8081, [8082, 8083]));
+    }
+
+
+    [Fact]
+    public void ModelRuntimeUsesFixedModelPortsForStableOpenCodeEndpoints()
+    {
+        var source = ReadMainWindowSources();
+        var loadSelectedModel = source.IndexOf("private async Task LoadSelectedModelAsync", StringComparison.Ordinal);
+        var renderSelectedProfile = source.IndexOf("await RenderSelectedModelLaunchSettingsAsync();", loadSelectedModel, StringComparison.Ordinal);
+        var resolveRuntime = source.IndexOf("var runtime = ResolveLaunchRuntime(runtimes);", loadSelectedModel, StringComparison.Ordinal);
+
+        Assert.Contains("Set a unique model port next to the runtime before launching.", source, StringComparison.Ordinal);
+        Assert.Contains("_sessions.ReservedPorts(sessionId).Contains(launchSettings.Port)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("launchSettings = launchSettings with { Port = allocatedPort }", source, StringComparison.Ordinal);
+        Assert.True(loadSelectedModel >= 0);
+        Assert.True(renderSelectedProfile > loadSelectedModel);
+        Assert.True(resolveRuntime > renderSelectedProfile);
+    }
+
+
+    [Fact]
+    public void ModelLaunchProfilePersistenceIsExplicit()
+    {
+        var source = ReadMainWindowSources();
+        var runtimeSelection = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.LaunchSettingsRuntimeSelection.cs"));
+        var renderStart = source.IndexOf("private async Task RenderSelectedModelLaunchSettingsAsync", StringComparison.Ordinal);
+        var saveDefaultsStart = source.IndexOf("private async Task SaveLaunchDefaultsFromControlsAsync", StringComparison.Ordinal);
+        var saveForModelStart = source.IndexOf("private async Task SaveLaunchSettingsForSelectedModelAsync", StringComparison.Ordinal);
+        var loadStart = source.IndexOf("private async Task LoadSelectedModelAsync", StringComparison.Ordinal);
+        var loadEnd = source.IndexOf("private async Task UnloadSelectedModelAsync", loadStart, StringComparison.Ordinal);
+
+        Assert.True(renderStart >= 0);
+        Assert.True(saveDefaultsStart > renderStart);
+        Assert.Contains("var profile = _stateStore is null ? null : await ReadModelLaunchProfileAsync(model);", source, StringComparison.Ordinal);
+        Assert.Contains("var draft = await DraftModelLaunchProfileAsync(model);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureModelLaunchProfileAsync(model)", source[renderStart..saveDefaultsStart], StringComparison.Ordinal);
+
+        Assert.Contains("_settings = launchDefaults with { Port = _settings.Port };", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_settings = ReadLaunchSettingsFromControls();", source, StringComparison.Ordinal);
+
+        Assert.True(loadStart >= 0);
+        Assert.True(loadEnd > loadStart);
+        Assert.DoesNotContain("SaveLaunchSettingsForModelAsync(model, launchSettings)", source[loadStart..loadEnd], StringComparison.Ordinal);
+        Assert.Contains("await SaveLaunchSettingsForModelAsync(model, launchSettings);", source[saveForModelStart..], StringComparison.Ordinal);
+
+        Assert.Contains("Missing runtime ({selectedRuntimeId})", runtimeSelection, StringComparison.Ordinal);
+        Assert.Contains("return runtimes.FirstOrDefault(runtime => string.Equals(runtime.Id, selectedRuntimeId", runtimeSelection, StringComparison.Ordinal);
+        Assert.Contains("Saved runtime '{runtimeId}' is missing.", runtimeSelection, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
+    public async Task ActiveRuntimeSessionStorePersistsMultipleSelectedSessions()
+    {
+        var root = CreateTempRoot();
+        var store = new ActiveRuntimeSessionStore(root);
+        var settings = AppSettings.CreateDefault(root);
+        var first = new ActiveRuntimeSession("model-a", "runtime-a", settings with { Port = 8081 }, "a.log", DateTimeOffset.UtcNow, ProcessId: 11, SessionId: "session-a", IsSelected: false);
+        var second = new ActiveRuntimeSession("model-b", "runtime-b", settings with { Port = 8082 }, "b.log", DateTimeOffset.UtcNow, ProcessId: 22, SessionId: "session-b", IsSelected: true);
+
+        await store.SaveAllAsync([first, second], TestContext.Current.CancellationToken);
+        var all = await store.ReadAllAsync(TestContext.Current.CancellationToken);
+        var selected = await store.TryReadAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, all.Count);
+        Assert.Equal("session-b", selected?.SessionId);
+        Assert.Equal(8082, selected?.LaunchSettings.Port);
+    }
+
+
+    [Fact]
+    public void LoadedModelSessionManagerTracksMultipleExposedEndpoints()
+    {
+        var root = CreateTempRoot();
+        var settings = AppSettings.CreateDefault(root);
+        var runtime = new RuntimeRecord("runtime", "llama.cpp CUDA", RuntimeMode.Native, RuntimeBackend.Cuda, Path.Combine(root, "llama-server.exe"), "{}", DateTimeOffset.UtcNow);
+        var modelA = new ModelRecord("model-a", "Model A", Path.Combine(root, "a.gguf"), OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        var modelB = new ModelRecord("model-b", "Model B", Path.Combine(root, "b.gguf"), OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        using var manager = new LoadedModelSessionManager();
+
+        manager.AttachExisting(runtime, modelA, settings with { Port = 8081 }, "a.log", LlamaRuntimeState.Loaded, "", "session-a", DateTimeOffset.UtcNow);
+        manager.AttachExisting(runtime, modelB, settings with { Port = 8082 }, "b.log", LlamaRuntimeState.Loaded, "", "session-b", DateTimeOffset.UtcNow);
+        manager.SelectModel(modelB.Id);
+        var sessions = manager.Snapshots();
+
+        Assert.Equal(2, sessions.Count);
+        Assert.Contains(sessions, session => session.ModelId == modelA.Id && session.Endpoint.EndsWith(":8081/v1", StringComparison.Ordinal));
+        Assert.Contains(sessions, session => session.ModelId == modelB.Id && session.Endpoint.EndsWith(":8082/v1", StringComparison.Ordinal) && session.IsSelected);
+        Assert.True(manager.IsModelLoaded(modelA.Id));
+        Assert.True(manager.IsModelActive(modelB.Id));
+    }
+
+
+    [Fact]
+    public async Task LoadedModelSessionManagerRemovesUnavailableRecoveredLoadedSessions()
+    {
+        var root = CreateTempRoot();
+        var settings = AppSettings.CreateDefault(root);
+        var runtime = new RuntimeRecord("runtime", "llama.cpp CUDA", RuntimeMode.Native, RuntimeBackend.Cuda, Path.Combine(root, "llama-server.exe"), "{}", DateTimeOffset.UtcNow);
+        var model = new ModelRecord("model-a", "Model A", Path.Combine(root, "a.gguf"), OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        using var manager = new LoadedModelSessionManager();
+
+        manager.AttachExisting(runtime, model, settings with { Port = 8081 }, "a.log", LlamaRuntimeState.Loaded, "", "session-a", DateTimeOffset.UtcNow);
+
+        var removed = await manager.StopUnavailableRecoveredSessionsAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(1, removed);
+        Assert.False(manager.HasRunningSessions);
+        Assert.Empty(manager.Snapshots());
+    }
+
+
+    [Fact]
+    public async Task LoadedModelSessionManagerRemovesUnavailableRecoveredLoadingSessions()
+    {
+        var root = CreateTempRoot();
+        var settings = AppSettings.CreateDefault(root);
+        var runtime = new RuntimeRecord("runtime", "llama.cpp WSL", RuntimeMode.Wsl, RuntimeBackend.Cuda, Path.Combine(root, "llama-server"), "{}", DateTimeOffset.UtcNow);
+        var model = new ModelRecord("model-a", "Model A", Path.Combine(root, "a.gguf"), OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        using var manager = new LoadedModelSessionManager();
+
+        manager.AttachExisting(runtime, model, settings with { Port = 8081 }, "a.log", LlamaRuntimeState.Loading, "marker", "session-a", DateTimeOffset.UtcNow);
+
+        var removed = await manager.StopUnavailableRecoveredSessionsAsync(_ => Task.FromResult(false));
+
+        Assert.Equal(1, removed);
+        Assert.False(manager.HasRunningSessions);
+        Assert.Empty(manager.Snapshots());
+    }
+
+
+    [Fact]
+    public void VramAdmissionWarnsOrBlocksConservatively()
+    {
+        var root = CreateTempRoot();
+        var modelPath = Path.Combine(root, "model.gguf");
+        File.WriteAllBytes(modelPath, new byte[1024 * 1024]);
+        var model = new ModelRecord("model", "Model", modelPath, OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        var runtime = new RuntimeRecord("runtime", "CUDA", RuntimeMode.Native, RuntimeBackend.Cuda, "llama-server.exe", "{}", DateTimeOffset.UtcNow);
+        var syclRuntime = runtime with { Name = "SYCL", Backend = RuntimeBackend.Sycl };
+        var settings = AppSettings.CreateDefault(root) with { ContextSize = 131072, GpuLayers = AppSettings.DefaultGpuLayers };
+        var service = new VramAdmissionService();
+
+        Assert.Equal(VramAdmissionDecision.Warn, service.Assess(model, runtime, settings, null).Decision);
+        Assert.Equal(VramAdmissionDecision.Warn, service.Assess(model, syclRuntime, settings, null).Decision);
+        Assert.Equal(VramAdmissionDecision.Block, service.Assess(model, runtime, settings, new VramMemorySnapshot(0.1, 24)).Decision);
+        Assert.Equal(VramAdmissionDecision.Allow, service.Assess(model, runtime, settings, new VramMemorySnapshot(8, 24)).Decision);
     }
 
 }

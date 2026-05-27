@@ -50,6 +50,7 @@ public sealed partial class OpenCodeConfigService
 {
     public const string LocalProviderId = "local-llm-console";
 
+    private const string LocalProviderPrefix = LocalProviderId + "-";
     private const string SchemaUrl = "https://opencode.ai/config.json";
     private const string LocalProviderName = "llama.cpp Console";
     private readonly string _workspaceRoot;

@@ -65,6 +65,15 @@ public partial class MainWindow
         _viewModel.RuntimeBuilds.ReplacePresets(RuntimeBuildPresetRows(), runtimes, sources, _runtimeUpdateStates);
     }
 
+    private void RefreshRuntimePackagePresets(IReadOnlyList<RuntimeRecord> runtimes)
+    {
+        if (_runtimePackageGrid is null) return;
+        _viewModel.RuntimePackages.ReplacePresets(RuntimePackagePresetRows(), runtimes, _runtimePackageUpdateStates);
+    }
+
+    private IReadOnlyList<RuntimePackagePreset> RuntimePackagePresetRows()
+        => RuntimePackageCatalogService.PresetRows();
+
     private IReadOnlyList<RuntimeBuildPreset> RuntimeBuildPresetRows()
         => RuntimeBuildCatalogService.PresetRows(_settings.RuntimeRoot);
 
@@ -111,6 +120,7 @@ public partial class MainWindow
         var repoUrl = (row.Source ?? "").Trim();
         var branch = (row.LatestLocal ?? "").Trim();
         var backend = RuntimeBuildBackendFromLabel(row.Backend);
+        var mode = RuntimeBuildModeFromLabel(row.Backend);
         var cuda = backend == RuntimeBackend.Cuda;
         if (string.IsNullOrWhiteSpace(label))
         {
@@ -122,7 +132,7 @@ public partial class MainWindow
             SetStatus("Enter an HTTPS Git repository URL for the custom runtime repository.");
             return;
         }
-        var preset = new RuntimeBuildPreset(RuntimeBuildCatalogService.CustomPresetId(label, repoUrl, branch, RuntimeBuildCatalogService.BackendKey(backend)), label, repoUrl, branch, cuda, true, RuntimeBuildCatalogService.BackendKey(backend));
+        var preset = new RuntimeBuildPreset(RuntimeBuildCatalogService.CustomPresetId(label, repoUrl, branch, RuntimeBuildCatalogService.BackendKey(backend), mode), label, repoUrl, branch, cuda, true, RuntimeBuildCatalogService.BackendKey(backend), mode);
         if (!RuntimeBuildCatalogService.IsSafeUiCustomPreset(preset))
         {
             SetStatus("Custom runtime repository must be an HTTPS Git URL with a safe branch/ref. Local, file, and SSH sources are reserved for manual advanced configuration.");
@@ -191,7 +201,7 @@ public partial class MainWindow
         var branchBox = DialogTextBox("Optional, leave blank for repository default");
         var backendBox = new WpfComboBox
         {
-            ItemsSource = new[] { "CUDA WSL", "Vulkan WSL", "CPU WSL" },
+            ItemsSource = new[] { "CPU Windows", "CUDA Windows", "Vulkan Windows", "SYCL Windows", "CPU WSL", "CUDA WSL", "Vulkan WSL", "SYCL WSL" },
             SelectedIndex = 0,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch
         };
@@ -219,6 +229,7 @@ public partial class MainWindow
             var repoUrl = repoBox.Text.Trim();
             var branch = branchBox.Text.Trim();
             var backend = RuntimeBuildBackendFromLabel(backendBox.SelectedItem?.ToString() ?? "");
+            var mode = RuntimeBuildModeFromLabel(backendBox.SelectedItem?.ToString() ?? "");
             var cuda = backend == RuntimeBackend.Cuda;
             if (string.IsNullOrWhiteSpace(label))
             {
@@ -241,7 +252,7 @@ public partial class MainWindow
                 return;
             }
 
-            result = new RuntimeBuildPreset(RuntimeBuildCatalogService.CustomPresetId(label, repoUrl, branch, RuntimeBuildCatalogService.BackendKey(backend)), label, repoUrl, branch, cuda, true, RuntimeBuildCatalogService.BackendKey(backend));
+            result = new RuntimeBuildPreset(RuntimeBuildCatalogService.CustomPresetId(label, repoUrl, branch, RuntimeBuildCatalogService.BackendKey(backend), mode), label, repoUrl, branch, cuda, true, RuntimeBuildCatalogService.BackendKey(backend), mode);
             dialog.DialogResult = true;
         };
         actions.Children.Add(addButton);
@@ -257,10 +268,19 @@ public partial class MainWindow
 
     private static RuntimeBackend RuntimeBuildBackendFromLabel(string label)
     {
+        if (label.Contains("sycl", StringComparison.OrdinalIgnoreCase)
+            || label.Contains("intel", StringComparison.OrdinalIgnoreCase))
+            return RuntimeBackend.Sycl;
         if (label.Contains("vulkan", StringComparison.OrdinalIgnoreCase)) return RuntimeBackend.Vulkan;
         if (label.Contains("cuda", StringComparison.OrdinalIgnoreCase)) return RuntimeBackend.Cuda;
         return RuntimeBackend.Cpu;
     }
+
+    private static RuntimeMode RuntimeBuildModeFromLabel(string label)
+        => label.Contains("windows", StringComparison.OrdinalIgnoreCase)
+            || label.Contains("native", StringComparison.OrdinalIgnoreCase)
+                ? RuntimeMode.Native
+                : RuntimeMode.Wsl;
 
     private static WpfTextBox DialogTextBox(string toolTip) => new()
     {

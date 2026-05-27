@@ -17,66 +17,64 @@ public partial class MainWindow
     private async Task RecoverActiveRuntimeSessionAsync()
     {
         if (_stateStore is null) return;
-        var session = await _activeSessions.TryReadAsync();
-        if (session is null) return;
+        var sessions = await _activeSessions.ReadAllAsync();
+        if (sessions.Count == 0) return;
 
         try
         {
-            if (session is null || string.IsNullOrWhiteSpace(session.ModelId) || string.IsNullOrWhiteSpace(session.RuntimeId))
-            {
-                ClearActiveRuntimeSession();
-                return;
-            }
-
             var models = await _stateStore.ListModelsAsync();
-            var model = models.FirstOrDefault(item => string.Equals(item.Id, session.ModelId, StringComparison.OrdinalIgnoreCase));
             var runtimes = await _stateStore.ListRuntimesAsync();
-            var runtime = runtimes.FirstOrDefault(item => string.Equals(item.Id, session.RuntimeId, StringComparison.OrdinalIgnoreCase));
-            if (model is null || runtime is null)
+            foreach (var session in sessions)
             {
-                ClearActiveRuntimeSession();
-                return;
-            }
+                if (string.IsNullOrWhiteSpace(session.ModelId) || string.IsNullOrWhiteSpace(session.RuntimeId))
+                    continue;
 
-            if (runtime.Mode == RuntimeMode.Wsl && string.IsNullOrWhiteSpace(session.ProcessMarker))
-            {
-                ClearActiveRuntimeSession();
-                return;
-            }
-            if (runtime.Mode == RuntimeMode.Native && !NativeRuntimeProcessMatches(session, runtime))
-            {
-                ClearActiveRuntimeSession();
-                return;
-            }
+                var model = models.FirstOrDefault(item => string.Equals(item.Id, session.ModelId, StringComparison.OrdinalIgnoreCase));
+                var runtime = runtimes.FirstOrDefault(item => string.Equals(item.Id, session.RuntimeId, StringComparison.OrdinalIgnoreCase));
+                if (model is null || runtime is null) continue;
+                if (runtime.Mode == RuntimeMode.Wsl && string.IsNullOrWhiteSpace(session.ProcessMarker)) continue;
+                if (runtime.Mode == RuntimeMode.Native && !NativeRuntimeProcessMatches(session, runtime)) continue;
 
-            var servedModels = await RuntimeServedModelsAsync(session.LaunchSettings);
-            if (servedModels.Count > 0 && !servedModels.Any(served => RuntimeEndpointService.ServedModelMatches(model, served)))
-            {
-                ClearActiveRuntimeSession();
-                return;
-            }
+                var servedModels = await RuntimeServedModelsAsync(session.LaunchSettings);
+                if (servedModels.Count > 0 && !servedModels.Any(served => RuntimeEndpointService.ServedModelMatches(model, served)))
+                    continue;
 
-            if (!await RuntimeEndpointAliveAsync(session.LaunchSettings))
-            {
-                if (!await RuntimeEndpointRespondingAsync(session.LaunchSettings))
+                var alive = await RuntimeEndpointAliveAsync(session.LaunchSettings);
+                if (!alive && !await RuntimeEndpointRespondingAsync(session.LaunchSettings))
+                    continue;
+
+                var state = alive ? LlamaRuntimeState.Loaded : LlamaRuntimeState.Loading;
+                var snapshot = _sessions.AttachExisting(
+                    runtime,
+                    model,
+                    session.LaunchSettings,
+                    session.LogPath,
+                    state,
+                    session.ProcessMarker,
+                    session.SessionId,
+                    session.StartedAt,
+                    session.ProcessId);
+                if (session.IsSelected)
+                    _sessions.SelectSession(snapshot.SessionId);
+                if (state == LlamaRuntimeState.Loading)
                 {
-                    ClearActiveRuntimeSession();
-                    return;
+                    if (session.IsSelected)
+                        StartModelLoadingTimer(model.Id, model.Name, session.LaunchSettings);
+                    StartRuntimeReadinessMonitor(model, session.LaunchSettings);
                 }
+            }
 
-                _llama.AttachExisting(runtime, model.Id, session.LaunchSettings, session.LogPath, LlamaRuntimeState.Loading, session.ProcessMarker);
-                _activeRuntimeSettings = session.LaunchSettings;
-                StartModelLoadingTimer(model.Name, session.LaunchSettings);
-                StartRuntimeReadinessMonitor(model, session.LaunchSettings);
-                StartRuntimeDashboardRefreshTimer();
-                await RefreshOverviewModelSelectorAsync();
-                await RefreshRuntimeMetricsAsync();
+            _activeRuntimeSettings = _sessions.ActiveSettings;
+            if (!_sessions.HasRunningSessions)
+            {
+                ClearActiveRuntimeSession();
                 return;
             }
 
-            _llama.AttachExisting(runtime, model.Id, session.LaunchSettings, session.LogPath, processMarker: session.ProcessMarker);
-            _activeRuntimeSettings = session.LaunchSettings;
-            SetStatus($"Recovered running model {model.Name} at {RuntimeEndpointService.EndpointDisplay(session.LaunchSettings)}.");
+            await SaveActiveRuntimeSessionsAsync();
+            var active = _sessions.SelectedSnapshot();
+            if (active is not null)
+                SetStatus($"Recovered {_sessions.Snapshots().Count} loaded model session(s). Selected {active.ModelName} at {active.EndpointDisplay}.");
             StartRuntimeDashboardRefreshTimer();
             await RefreshOverviewModelSelectorAsync();
             await RefreshRuntimeMetricsAsync();
@@ -111,8 +109,44 @@ public partial class MainWindow
 
         if (!_llama.MarkLoadedIfRunning()) return;
         var modelName = await ActiveModelDisplayNameAsync(_llama.ActiveModelId);
-        StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: modelName);
+        if (string.Equals(_modelLoadingModelId, _llama.ActiveModelId, StringComparison.OrdinalIgnoreCase))
+            StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: modelName);
+        await SaveActiveRuntimeSessionsAsync();
         SetStatus($"Loaded {modelName} at {RuntimeEndpointService.EndpointDisplay(launchSettings)}.");
+        UpdateModelActionButtons();
+        UpdateOverviewModelActions();
+    }
+
+    private async Task MarkLoadedSessionsIfReadyAsync()
+    {
+        var removed = _sessions.RemoveFailedOrStopped();
+        removed += await _sessions.StopUnavailableRecoveredSessionsAsync(async session =>
+            await RuntimeEndpointRespondingAsync(session.LaunchSettings));
+        if (removed > 0)
+        {
+            _activeRuntimeSettings = _sessions.ActiveSettings;
+            await SaveActiveRuntimeSessionsAsync();
+            _viewModel.Overview.ReplaceSessions(_sessions.Snapshots());
+            _loadedSessionsGrid?.Items.Refresh();
+            UpdateModelActionButtons();
+            UpdateOverviewModelActions();
+        }
+
+        var changed = false;
+        foreach (var session in _sessions.Snapshots().Where(session => session is { IsRunning: true, Status: LoadedModelSessionStatus.Loading }))
+        {
+            if (!await RuntimeEndpointAliveAsync(session.LaunchSettings)) continue;
+            if (!_sessions.MarkModelLoadedIfRunning(session.ModelId)) continue;
+
+            changed = true;
+            if (string.Equals(_modelLoadingModelId, session.ModelId, StringComparison.OrdinalIgnoreCase))
+                StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: session.ModelName);
+        }
+
+        if (!changed) return;
+        await SaveActiveRuntimeSessionsAsync();
+        _viewModel.Overview.ReplaceSessions(_sessions.Snapshots());
+        _loadedSessionsGrid?.Items.Refresh();
         UpdateModelActionButtons();
         UpdateOverviewModelActions();
     }
@@ -171,13 +205,28 @@ public partial class MainWindow
         }
     }
 
-    private async Task SaveActiveRuntimeSessionAsync(RuntimeRecord runtime, ModelRecord model, AppSettings launchSettings)
-        => await SaveActiveRuntimeSessionAsync(runtime.Id, model.Id, launchSettings, _llama.LogPath);
-
-    private async Task SaveActiveRuntimeSessionAsync(string runtimeId, string modelId, AppSettings launchSettings, string logPath)
+    private async Task SaveActiveRuntimeSessionsAsync()
     {
-        var session = new ActiveRuntimeSession(modelId, runtimeId, launchSettings, logPath, DateTimeOffset.UtcNow, _llama.WslProcessMarker, _llama.ProcessId);
-        await _activeSessions.SaveAsync(session);
+        var sessions = _sessions.Snapshots()
+            .Where(session => session.IsRunning)
+            .Select(session => new ActiveRuntimeSession(
+                session.ModelId,
+                session.RuntimeId,
+                session.LaunchSettings,
+                session.LogPath,
+                session.StartedAt,
+                session.ProcessMarker,
+                session.ProcessId,
+                session.SessionId,
+                session.IsSelected))
+            .ToArray();
+        if (sessions.Length == 0)
+        {
+            ClearActiveRuntimeSession();
+            return;
+        }
+
+        await _activeSessions.SaveAllAsync(sessions);
     }
 
     private void ClearActiveRuntimeSession() => _activeSessions.Clear();

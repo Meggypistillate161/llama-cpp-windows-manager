@@ -227,6 +227,74 @@ public partial class MainWindow
         await Task.CompletedTask;
     }
 
+    private async Task InstallUbuntuSyclRuntimeAsync()
+    {
+        var distro = SelectedUbuntuDistroName();
+        if (string.IsNullOrWhiteSpace(distro)) { SetStatus("Install or select an Ubuntu distro first."); return; }
+        var result = ThemedMessageBox.Show(
+            this,
+            $"This opens PowerShell and installs Intel Level Zero/OpenCL runtime packages inside {distro}:\n\nsudo apt install -y {WslSetupCommands.SyclRuntimePackages}\n\nThese packages let sycl-ls see Intel Arc and supported Intel GPUs inside WSL.",
+            "Install WSL Intel GPU runtime",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes) return;
+
+        CommandLineService.StartVisibleWslBashScript(distro, WslSetupCommands.InstallSyclRuntimeCommand, elevated: false);
+        SetStatus($"WSL Intel GPU runtime install started for {distro}.");
+        await Task.CompletedTask;
+    }
+
+    private async Task DeleteUbuntuSyclRuntimeAsync()
+    {
+        var distro = SelectedUbuntuDistroName();
+        if (string.IsNullOrWhiteSpace(distro)) { SetStatus("Install or select an Ubuntu distro first."); return; }
+        var result = ThemedMessageBox.Show(
+            this,
+            $"This opens PowerShell and removes Intel GPU runtime packages from {distro}:\n\nsudo apt remove -y {WslSetupCommands.SyclRuntimePackages}\n\nThese packages may also be used outside {AppDisplayName}.",
+            "Delete WSL Intel GPU runtime",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+
+        CommandLineService.StartVisibleWslBashScript(distro, WslSetupCommands.RemoveSyclRuntimeCommand, elevated: false);
+        SetStatus($"WSL Intel GPU runtime removal started for {distro}.");
+        await Task.CompletedTask;
+    }
+
+    private async Task InstallUbuntuSyclOneApiAsync()
+    {
+        var distro = SelectedUbuntuDistroName();
+        if (string.IsNullOrWhiteSpace(distro)) { SetStatus("Install or select an Ubuntu distro first."); return; }
+        var result = ThemedMessageBox.Show(
+            this,
+            $"This opens PowerShell and installs Intel oneAPI DPC++ compiler, MKL, and DNNL packages inside {distro}:\n\nsudo apt install -y {WslSetupCommands.SyclOneApiPackages}\n\nIt adds Intel's oneAPI apt repository, sources setvars.sh, and runs sycl-ls to verify the toolchain.",
+            "Install WSL Intel oneAPI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes) return;
+
+        CommandLineService.StartVisibleWslBashScript(distro, WslSetupCommands.InstallSyclOneApiCommand, elevated: false);
+        SetStatus($"WSL Intel oneAPI install started for {distro}.");
+        await Task.CompletedTask;
+    }
+
+    private async Task DeleteUbuntuSyclOneApiAsync()
+    {
+        var distro = SelectedUbuntuDistroName();
+        if (string.IsNullOrWhiteSpace(distro)) { SetStatus("Install or select an Ubuntu distro first."); return; }
+        var result = ThemedMessageBox.Show(
+            this,
+            $"This opens PowerShell and removes Intel oneAPI packages from {distro}:\n\nsudo apt remove -y {WslSetupCommands.SyclOneApiPackages}\n\nThese packages may also be used outside {AppDisplayName}.",
+            "Delete WSL Intel oneAPI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+
+        CommandLineService.StartVisibleWslBashScript(distro, WslSetupCommands.RemoveSyclOneApiCommand, elevated: false);
+        SetStatus($"WSL Intel oneAPI removal started for {distro}.");
+        await Task.CompletedTask;
+    }
+
     private string SelectedUbuntuDistroName()
     {
         if (_wslDistroGrid?.SelectedItem is UiRow row)

@@ -30,7 +30,7 @@ public partial class MainWindow
 
     private async void RuntimeDashboardTimer_Tick(object? sender, EventArgs e)
     {
-        if (_viewModel.CurrentPage != "Overview" && !_llama.IsRunning) return;
+        if (_viewModel.CurrentPage != "Overview" && !_sessions.HasRunningSessions) return;
         try
         {
             await RefreshRuntimeMetricsAsync();
@@ -63,6 +63,34 @@ public partial class MainWindow
 
             var preset = RuntimeBuildPresetFromRowButton(sender);
             if (preset is not null) await DownloadRuntimeSourceAsync(preset);
+        });
+    }
+
+    private async void InstallRuntimePackageRow_Click(object sender, RoutedEventArgs e)
+    {
+        await RunEventAsync(async () =>
+        {
+            var preset = RuntimePackagePresetFromRowButton(sender);
+            if (preset is not null) await InstallRuntimePackageAsync(preset);
+        });
+    }
+
+    private async void CheckRuntimePackageUpdateRow_Click(object sender, RoutedEventArgs e)
+    {
+        await RunEventAsync(async () =>
+        {
+            var row = (sender as FrameworkElement)?.Tag as RuntimePackagePresetRow;
+            var preset = RuntimePackagePresetFromRowButton(sender);
+            if (preset is not null) await CheckRuntimePackageUpdateAsync(preset, row);
+        });
+    }
+
+    private async void DeleteRuntimePackageRow_Click(object sender, RoutedEventArgs e)
+    {
+        await RunEventAsync(async () =>
+        {
+            var preset = RuntimePackagePresetFromRowButton(sender);
+            if (preset is not null) await DeleteRuntimePackageBuildsAsync(preset);
         });
     }
 

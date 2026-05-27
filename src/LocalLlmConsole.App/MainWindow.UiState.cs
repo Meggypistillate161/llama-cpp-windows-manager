@@ -17,7 +17,7 @@ public partial class MainWindow
     private void SetPage(string title, string subtitle)
     {
         if (title != "Models") StopDownloadHistoryRefreshTimer();
-        if (title != "Overview" && !_llama.IsRunning) StopRuntimeDashboardRefreshTimer();
+        if (title != "Overview" && !_sessions.HasRunningSessions) StopRuntimeDashboardRefreshTimer();
         _viewModel.CurrentPage = title;
         SetActiveNavigation(title);
     }

@@ -99,7 +99,10 @@ public sealed class AppUpdateService
     {
         if (string.IsNullOrWhiteSpace(update.AssetUrl))
             throw new InvalidOperationException("The latest GitHub release does not include a portable llama.cpp Console asset.");
-        if (string.IsNullOrWhiteSpace(update.ExpectedSha256) && string.IsNullOrWhiteSpace(update.ChecksumAssetUrl))
+        var hasInlineChecksum = !string.IsNullOrWhiteSpace(update.ExpectedSha256);
+        if (hasInlineChecksum && string.IsNullOrWhiteSpace(NormalizeSha256(update.ExpectedSha256)))
+            throw new InvalidOperationException("The latest GitHub release includes an invalid SHA-256 checksum. Refusing to stage an unverifiable update.");
+        if (!hasInlineChecksum && string.IsNullOrWhiteSpace(update.ChecksumAssetUrl))
             throw new InvalidOperationException("The latest GitHub release asset is missing a SHA-256 companion file. Refusing to stage an unverifiable update.");
 
         var targetExe = string.IsNullOrWhiteSpace(currentExecutablePath)
@@ -171,7 +174,7 @@ public sealed class AppUpdateService
         }
         catch
         {
-            try { File.Delete(path); } catch {}
+            try { File.Delete(path); } catch { }
             return null;
         }
     }
@@ -192,15 +195,20 @@ public sealed class AppUpdateService
     private async Task VerifyChecksumAssetAsync(AppUpdateInfo update, string assetPath, CancellationToken cancellationToken)
     {
         var expected = NormalizeSha256(update.ExpectedSha256);
+        if (!string.IsNullOrWhiteSpace(update.ExpectedSha256) && string.IsNullOrWhiteSpace(expected))
+            throw new InvalidOperationException("The latest GitHub release includes an invalid SHA-256 checksum. Refusing to install without verification.");
         if (string.IsNullOrWhiteSpace(expected) && !string.IsNullOrWhiteSpace(update.ChecksumAssetUrl))
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, update.ChecksumAssetUrl);
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             expected = ExtractSha256(await response.Content.ReadAsStringAsync(cancellationToken), update.AssetName);
+            if (string.IsNullOrWhiteSpace(expected))
+                throw new InvalidOperationException($"The SHA-256 companion file does not contain a checksum for {update.AssetName}. Refusing to install without verification.");
         }
 
-        if (string.IsNullOrWhiteSpace(expected)) return;
+        if (string.IsNullOrWhiteSpace(expected))
+            throw new InvalidOperationException("The latest GitHub release asset could not be verified.");
 
         var actual = ComputeSha256(assetPath);
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(expected), Convert.FromHexString(actual)))

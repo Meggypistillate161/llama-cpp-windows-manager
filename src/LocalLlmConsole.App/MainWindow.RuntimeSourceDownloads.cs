@@ -54,7 +54,7 @@ public partial class MainWindow
                 Directory.CreateDirectory(RuntimeSourceRoot());
                 await CloneOrUpdateRuntimeSourceAsync(preset, sourceDir, job.LogPath);
                 var commit = await GitCommitAsync(sourceDir);
-                var source = new RuntimeSourceEntry(preset.Id, preset.Label, preset.RepoUrl, preset.Branch, preset.Cuda, sourceDir, commit, DateTimeOffset.UtcNow, RuntimeBuildCatalogService.BackendKey(preset));
+                var source = new RuntimeSourceEntry(preset.Id, preset.Label, preset.RepoUrl, preset.Branch, preset.Cuda, sourceDir, commit, DateTimeOffset.UtcNow, RuntimeBuildCatalogService.BackendKey(preset), RuntimeBuildCatalogService.BuildMode(preset));
                 await File.WriteAllTextAsync(RuntimeBuildCatalogService.SourceMetadataPath(sourceDir), JsonSerializer.Serialize(source, new JsonSerializerOptions { WriteIndented = true }));
                 await UpdateRuntimeJobAsync(job, JobStatus.Completed, preset, "download", sourceDir, $"{preset.Label} downloaded at {RuntimeMetadataService.ShortCommit(commit)}. It now appears under Installed local builds.");
                 await RefreshRuntimesAsync();

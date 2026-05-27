@@ -196,17 +196,29 @@ public partial class MainWindow
 
     private async Task MonitorDownloadAsync(string jobId)
     {
-        while (_huggingFace?.IsDownloadActive(jobId) == true)
+        while (_huggingFace?.IsDownloadActive(jobId) == true && !await DownloadJobReachedTerminalStatusAsync(jobId))
             await Task.Delay(1500);
 
-        await Dispatcher.InvokeAsync(async () =>
-        {
-            await RefreshModelsAsync();
-            await RefreshJobsAsync();
-            await RefreshOverviewAsync();
-            await RefreshDownloadHistoryAsync();
-            await RefreshHuggingFaceInstallStateAsync();
-        });
+        var refresh = await Dispatcher.InvokeAsync(RefreshCompletedDownloadAsync);
+        await refresh;
+    }
+
+    private async Task<bool> DownloadJobReachedTerminalStatusAsync(string jobId)
+    {
+        if (_stateStore is null) return false;
+        var job = (await _stateStore.ListJobsAsync()).FirstOrDefault(job => string.Equals(job.Id, jobId, StringComparison.OrdinalIgnoreCase));
+        return job?.Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Paused or JobStatus.Interrupted;
+    }
+
+    private async Task RefreshCompletedDownloadAsync()
+    {
+        if (_catalog is not null)
+            await _catalog.ScanAsync(_settings.ModelsRoot);
+        await RefreshModelsAsync();
+        await RefreshJobsAsync();
+        await RefreshOverviewAsync();
+        await RefreshDownloadHistoryAsync();
+        await RefreshHuggingFaceInstallStateAsync();
     }
 
     private void ConfigureHfSearchGrid()

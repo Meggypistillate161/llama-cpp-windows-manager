@@ -47,7 +47,11 @@ public partial class MainWindow
             HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
             ToolTip = TooltipText("Choose a local model to load with its saved launch profile.")
         };
-        _overviewModelCombo.SelectionChanged += (_, _) => UpdateOverviewModelActions();
+        _overviewModelCombo.SelectionChanged += async (_, _) =>
+        {
+            await SelectOverviewModelSessionAsync();
+            UpdateOverviewModelActions();
+        };
         Grid.SetColumn(_overviewModelCombo, 1);
         modelBar.Children.Add(_overviewModelCombo);
         _overviewLoadButton = Button("Load", async (_, _) => await LoadOverviewSelectedModelAsync());
@@ -60,6 +64,9 @@ public partial class MainWindow
         root.Children.Add(modelBar);
 
         var dashboardSection = Stack();
+        _loadedSessionsGrid = GridFor(("Model", "C1", 1.45), ("Size", "C2", .62), ("State", "C3", .62), ("OpenAI endpoint", "C4", 1.9), ("Runtime", "C5", 1.25), ("Backend", "C6", .75));
+        _loadedSessionsGrid.ItemsSource = _viewModel.Overview.SessionRows;
+        dashboardSection.Children.Add(GridSection("Loaded Model Sessions", _loadedSessionsGrid));
         dashboardSection.Children.Add(Text("Model Status", 18, true));
         var runtimeDashboard = new Grid { Margin = new Thickness(0, 2, 0, 8) };
         runtimeDashboard.ColumnDefinitions.Add(new ColumnDefinition());
@@ -67,7 +74,8 @@ public partial class MainWindow
         runtimeDashboard.ColumnDefinitions.Add(new ColumnDefinition());
         for (var row = 0; row < 2; row++)
             runtimeDashboard.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _runtimeDashboardModel = AddMetric(runtimeDashboard, "Model status", 0, 0, includeProgress: true, out _runtimeDashboardModelProgress);
+        _runtimeDashboardModelProgress = null;
+        _runtimeDashboardModel = AddMetric(runtimeDashboard, "Model status", 0, 0);
         _runtimeDashboardRuntime = AddMetric(runtimeDashboard, "Runtime build", 0, 1);
         _runtimeDashboardRequests = AddMetric(runtimeDashboard, "Settings", 0, 2);
         _runtimeDashboardGenerationRate = AddMetric(runtimeDashboard, "Tokens (Live)", 1, 0);
@@ -162,7 +170,7 @@ public partial class MainWindow
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.05, GridUnitType.Star), MinWidth = 330 });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.95, GridUnitType.Star), MinWidth = 380 });
-        _modelsGrid = GridFor(("Name", nameof(ModelGridRow.Name), 2.5), ("Quant", nameof(ModelGridRow.Quant), .6));
+        _modelsGrid = GridFor(("Name", nameof(ModelGridRow.Name), 2.35), ("Quant", nameof(ModelGridRow.Quant), .6), ("Size", nameof(ModelGridRow.Size), .65));
         AddButtonColumn(_modelsGrid, "Open Folder", nameof(ModelGridRow.OpenFolderAction), nameof(ModelGridRow.CanOpenFolder), OpenModelFolderRow_Click, .85, tooltipBinding: nameof(ModelGridRow.OpenFolderToolTip));
         AddButtonColumn(_modelsGrid, "Delete", nameof(ModelGridRow.DeleteAction), nameof(ModelGridRow.CanDelete), DeleteModelRow_Click, .65, tooltipBinding: nameof(ModelGridRow.DeleteToolTip));
         SetModelGridColumnSizing(_modelsGrid);
@@ -204,22 +212,46 @@ public partial class MainWindow
 
     private void ShowRuntimes()
     {
-        SetPage("Runtimes", "Register Ubuntu/WSL llama.cpp builds and run them without visible command prompts.");
+        SetPage("Runtimes", "Register Windows or Ubuntu/WSL llama.cpp builds and run them without visible command prompts.");
+        _runtimeGrid = null;
+        _runtimePackageGrid = null;
+        _runtimeBuildGrid = null;
+        _runtimeJobsGrid = null;
         var root = new Grid { Margin = new Thickness(16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(.86, GridUnitType.Star), MinHeight = 92 });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_showAdvancedRuntimes ? .72 : 1, GridUnitType.Star), MinHeight = 86 });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(.72, GridUnitType.Star), MinHeight = 92 });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(.94, GridUnitType.Star), MinHeight = 130 });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_showAdvancedRuntimes ? .72 : 1, GridUnitType.Star), MinHeight = 94 });
+        if (_showAdvancedRuntimes)
+        {
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(.72, GridUnitType.Star), MinHeight = 94 });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(8) });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(.82, GridUnitType.Star), MinHeight = 120 });
+        }
 
         var folderStrip = FolderStripActionsFirst(
             "Runtimes folder",
             _settings.RuntimeRoot,
             out _runtimesFolderText,
             ("Choose Folder", async (_, _) => await ChooseRuntimeFolderAsync(scanAfter: true)));
-        Grid.SetRow(folderStrip, 0);
-        root.Children.Add(folderStrip);
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        folderStrip.Margin = new Thickness(0);
+        header.Children.Add(folderStrip);
+        _runtimeAdvancedToggleButton = Button(_showAdvancedRuntimes ? "Hide advanced" : "Show advanced", (_, _) =>
+        {
+            _showAdvancedRuntimes = !_showAdvancedRuntimes;
+            ShowRuntimes();
+        });
+        SetButtonToolTip(_runtimeAdvancedToggleButton, _showAdvancedRuntimes ? "Hide source builds and runtime job history." : "Show source builds and runtime job history.");
+        _runtimeAdvancedToggleButton.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
+        _runtimeAdvancedToggleButton.Margin = new Thickness(12, 0, 0, 6);
+        Grid.SetColumn(_runtimeAdvancedToggleButton, 1);
+        header.Children.Add(_runtimeAdvancedToggleButton);
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
 
         _runtimeGrid = GridFor(("Name", nameof(RuntimeCatalogRow.Name), 1.4), ("Backend", nameof(RuntimeCatalogRow.Backend), .55), ("State", nameof(RuntimeCatalogRow.State), .55), ("Location", nameof(RuntimeCatalogRow.Location), 3));
         _runtimeGrid.RowDetailsVisibilityMode = DataGridRowDetailsVisibilityMode.VisibleWhenSelected;
@@ -238,36 +270,55 @@ public partial class MainWindow
         root.Children.Add(runtimeSection);
         root.Children.Add(HorizontalGridSplitter(2));
 
-        _runtimeBuildGrid = GridFor(("Repository", nameof(RuntimeBuildPresetRow.Label), 1.4), ("Backend", nameof(RuntimeBuildPresetRow.Backend), .7), ("Local", nameof(RuntimeBuildPresetRow.LocalStatus), .85), ("Latest Local", nameof(RuntimeBuildPresetRow.LatestLocal), 1.2), ("Source", nameof(RuntimeBuildPresetRow.Source), 2.3));
-        _runtimeBuildGrid.IsReadOnly = false;
-        AddButtonColumn(_runtimeBuildGrid, "Download", nameof(RuntimeBuildPresetRow.DownloadAction), nameof(RuntimeBuildPresetRow.CanDownload), DownloadRuntimePresetRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.DownloadToolTip));
-        AddButtonColumn(_runtimeBuildGrid, "Update", nameof(RuntimeBuildPresetRow.CheckAction), nameof(RuntimeBuildPresetRow.CanCheck), CheckRuntimePresetUpdateRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.CheckToolTip));
-        AddButtonColumn(_runtimeBuildGrid, "Delete", nameof(RuntimeBuildPresetRow.DeleteAction), nameof(RuntimeBuildPresetRow.CanDelete), DeleteRuntimePresetRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.DeleteToolTip));
-        ApplyGridTextMargin(_runtimeBuildGrid, new Thickness(6, 0, 6, 0));
-        SetRuntimeBuildGridColumnSizing(_runtimeBuildGrid);
-        _runtimeBuildGrid.ItemsSource = _viewModel.RuntimeBuilds.Rows;
-        var buildSection = GridSection(
-            "Runtime Repositories",
-            _runtimeBuildGrid,
-            "Known llama.cpp source repositories. Download source, check for upstream changes, or remove all managed builds from a repository.");
-        Grid.SetRow(buildSection, 3);
-        root.Children.Add(buildSection);
-        root.Children.Add(HorizontalGridSplitter(4));
+        _runtimePackageGrid = GridFor(("Runtime", nameof(RuntimePackagePresetRow.Label), 1.45), ("Backend", nameof(RuntimePackagePresetRow.Backend), .68), ("Local", nameof(RuntimePackagePresetRow.LocalStatus), .78), ("Latest Release", nameof(RuntimePackagePresetRow.LatestRelease), 1.2), ("Assets", nameof(RuntimePackagePresetRow.Assets), 2.35));
+        AddButtonColumn(_runtimePackageGrid, "Install", nameof(RuntimePackagePresetRow.InstallAction), nameof(RuntimePackagePresetRow.CanInstall), InstallRuntimePackageRow_Click, .75, tooltipBinding: nameof(RuntimePackagePresetRow.InstallToolTip));
+        AddButtonColumn(_runtimePackageGrid, "Update", nameof(RuntimePackagePresetRow.CheckAction), nameof(RuntimePackagePresetRow.CanCheck), CheckRuntimePackageUpdateRow_Click, .75, tooltipBinding: nameof(RuntimePackagePresetRow.CheckToolTip));
+        AddButtonColumn(_runtimePackageGrid, "Delete", nameof(RuntimePackagePresetRow.DeleteAction), nameof(RuntimePackagePresetRow.CanDelete), DeleteRuntimePackageRow_Click, .75, tooltipBinding: nameof(RuntimePackagePresetRow.DeleteToolTip));
+        ApplyGridTextMargin(_runtimePackageGrid, new Thickness(6, 0, 6, 0));
+        SetRuntimeBuildGridColumnSizing(_runtimePackageGrid);
+        _runtimePackageGrid.ItemsSource = _viewModel.RuntimePackages.Rows;
+        var packageSection = GridSection(
+            "Runtime Downloads",
+            _runtimePackageGrid,
+            "Install official prebuilt llama.cpp releases. Build tools are not required for these downloads.");
+        Grid.SetRow(packageSection, 3);
+        root.Children.Add(packageSection);
+        if (_showAdvancedRuntimes)
+            root.Children.Add(HorizontalGridSplitter(4));
 
-        _runtimeJobsGrid = GridFor(("Status", "C1", .8), ("Kind", "C2", 1), ("Updated", "C4", 1.1), ("Payload", "C5", 3.2));
-        AddButtonColumn(_runtimeJobsGrid, "Log", "C6", "B1", OpenRuntimeJobLogRow_Click, .55, tooltipBinding: "T1");
-        AddButtonColumn(_runtimeJobsGrid, "Cancel", "C7", "B2", CancelRuntimeJobRow_Click, .7, tooltipBinding: "T2");
-        AddButtonColumn(_runtimeJobsGrid, "Retry", "C8", "B3", RetryRuntimeJobRow_Click, .65, tooltipBinding: "T3");
-        AddButtonColumn(_runtimeJobsGrid, "Clear", "C9", "B4", ClearRuntimeJobRow_Click, .65, tooltipBinding: "T4");
-        ApplyRuntimeJobsRowStyle(_runtimeJobsGrid);
-        SetRuntimeJobsGridColumnSizing(_runtimeJobsGrid);
-        _runtimeJobsGrid.ItemsSource = _viewModel.Jobs.RuntimeRows;
-        var jobsSection = GridSection(
-            "Runtime Jobs",
-            _runtimeJobsGrid,
-            "Recent runtime download and build work. Use Log to inspect compiler, git, or WSL output.");
-        Grid.SetRow(jobsSection, 5);
-        root.Children.Add(jobsSection);
+        if (_showAdvancedRuntimes)
+        {
+            _runtimeBuildGrid = GridFor(("Repository", nameof(RuntimeBuildPresetRow.Label), 1.4), ("Backend", nameof(RuntimeBuildPresetRow.Backend), .7), ("Local", nameof(RuntimeBuildPresetRow.LocalStatus), .85), ("Latest Local", nameof(RuntimeBuildPresetRow.LatestLocal), 1.2), ("Source", nameof(RuntimeBuildPresetRow.Source), 2.3));
+            _runtimeBuildGrid.IsReadOnly = false;
+            AddButtonColumn(_runtimeBuildGrid, "Download", nameof(RuntimeBuildPresetRow.DownloadAction), nameof(RuntimeBuildPresetRow.CanDownload), DownloadRuntimePresetRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.DownloadToolTip));
+            AddButtonColumn(_runtimeBuildGrid, "Update", nameof(RuntimeBuildPresetRow.CheckAction), nameof(RuntimeBuildPresetRow.CanCheck), CheckRuntimePresetUpdateRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.CheckToolTip));
+            AddButtonColumn(_runtimeBuildGrid, "Delete", nameof(RuntimeBuildPresetRow.DeleteAction), nameof(RuntimeBuildPresetRow.CanDelete), DeleteRuntimePresetRow_Click, .75, tooltipBinding: nameof(RuntimeBuildPresetRow.DeleteToolTip));
+            ApplyGridTextMargin(_runtimeBuildGrid, new Thickness(6, 0, 6, 0));
+            SetRuntimeBuildGridColumnSizing(_runtimeBuildGrid);
+            _runtimeBuildGrid.ItemsSource = _viewModel.RuntimeBuilds.Rows;
+            var buildSection = GridSection(
+                "Build From Source (Advanced)",
+                _runtimeBuildGrid,
+                "Use source builds for custom forks, patches, branches, or runtime targets without official prebuilt releases.");
+            Grid.SetRow(buildSection, 5);
+            root.Children.Add(buildSection);
+            root.Children.Add(HorizontalGridSplitter(6));
+
+            _runtimeJobsGrid = GridFor(("Status", "C1", .8), ("Kind", "C2", 1), ("Updated", "C4", 1.1), ("Payload", "C5", 3.2));
+            AddButtonColumn(_runtimeJobsGrid, "Log", "C6", "B1", OpenRuntimeJobLogRow_Click, .55, tooltipBinding: "T1");
+            AddButtonColumn(_runtimeJobsGrid, "Cancel", "C7", "B2", CancelRuntimeJobRow_Click, .7, tooltipBinding: "T2");
+            AddButtonColumn(_runtimeJobsGrid, "Retry", "C8", "B3", RetryRuntimeJobRow_Click, .65, tooltipBinding: "T3");
+            AddButtonColumn(_runtimeJobsGrid, "Clear", "C9", "B4", ClearRuntimeJobRow_Click, .65, tooltipBinding: "T4");
+            ApplyRuntimeJobsRowStyle(_runtimeJobsGrid);
+            SetRuntimeJobsGridColumnSizing(_runtimeJobsGrid);
+            _runtimeJobsGrid.ItemsSource = _viewModel.Jobs.RuntimeRows;
+            var jobsSection = GridSection(
+                "Runtime Jobs",
+                _runtimeJobsGrid,
+                "Recent runtime download and build work. Use Log to inspect compiler, git, Windows, or WSL output.");
+            Grid.SetRow(jobsSection, 7);
+            root.Children.Add(jobsSection);
+        }
 
         PageHost.Content = root;
         RunBackground(DetectAndRefreshRuntimesAsync, "Runtime refresh failed");

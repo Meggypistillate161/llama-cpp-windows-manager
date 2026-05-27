@@ -44,12 +44,21 @@ public sealed partial class OpenCodeConfigService
     };
 
     private static JsonObject EnsureLocalProvider(JsonObject config, string baseUrl, string apiKey = "")
+        => EnsureLocalProvider(config, LocalProviderId, LocalProviderName, baseUrl, apiKey, updateBaseUrl: true);
+
+    private static JsonObject EnsureLocalProvider(
+        JsonObject config,
+        string providerId,
+        string providerName,
+        string baseUrl,
+        string apiKey = "",
+        bool updateBaseUrl = true)
     {
-        var provider = EnsureObject(EnsureObject(config, "provider"), LocalProviderId);
+        var provider = EnsureObject(EnsureObject(config, "provider"), providerId);
         provider["npm"] = "@ai-sdk/openai-compatible";
-        provider["name"] = LocalProviderName;
+        provider["name"] = providerName;
         var options = EnsureObject(provider, "options");
-        if (!string.IsNullOrWhiteSpace(baseUrl))
+        if (updateBaseUrl && !string.IsNullOrWhiteSpace(baseUrl))
             options["baseURL"] = baseUrl;
         options["apiKey"] = string.IsNullOrWhiteSpace(apiKey) ? "EMPTY" : apiKey.Trim();
         return provider;

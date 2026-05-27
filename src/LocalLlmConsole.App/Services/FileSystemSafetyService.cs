@@ -37,7 +37,7 @@ public static class FileSystemSafetyService
         long size = 0;
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
-            try { size += new FileInfo(file).Length; } catch {}
+            try { size += new FileInfo(file).Length; } catch { }
         }
         return size;
     }

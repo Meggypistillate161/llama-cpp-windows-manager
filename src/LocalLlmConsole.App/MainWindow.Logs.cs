@@ -88,8 +88,9 @@ public partial class MainWindow
         var jobs = _stateStore is null
             ? new Dictionary<string, JobRecord>(StringComparer.OrdinalIgnoreCase)
             : (await _stateStore.ListJobsAsync()).ToDictionary(job => LogFileService.NormalizePath(job.LogPath), StringComparer.OrdinalIgnoreCase);
-        var activeModel = _llama.IsRunning ? await ActiveModelDisplayNameAsync(_llama.ActiveModelId) : "";
-        var activeLogPath = LogFileService.NormalizePath(_llama.LogPath);
+        var active = _sessions.SelectedSnapshot();
+        var activeModel = active is { IsRunning: true } ? active.ModelName : "";
+        var activeLogPath = LogFileService.NormalizePath(active?.LogPath ?? "");
 
         var files = await Task.Run(() => Directory.EnumerateFiles(logRoot, "*.log", SearchOption.TopDirectoryOnly)
             .Select(path => new FileInfo(path))
@@ -188,7 +189,7 @@ public partial class MainWindow
             return;
         }
 
-        var deletionPlan = LogFileService.BuildDeletionPlan(_workspaceRoot, paths, _llama.LogPath);
+        var deletionPlan = LogFileService.BuildDeletionPlan(_workspaceRoot, paths, ActiveRuntimeLogPaths());
 
         if (deletionPlan.DeletablePaths.Count == 0)
         {
@@ -250,7 +251,7 @@ public partial class MainWindow
 
         await RunAsync("Deleting logs...", async () =>
         {
-            var deletionPlan = LogFileService.BuildDeletionPlan(_workspaceRoot, candidates, _llama.LogPath);
+            var deletionPlan = LogFileService.BuildDeletionPlan(_workspaceRoot, candidates, ActiveRuntimeLogPaths());
             var deleted = await Task.Run(() => LogFileService.DeleteLogs(deletionPlan.DeletablePaths));
             if (_logsBox is not null) _logsBox.Text = "";
             await RefreshLogsAsync();
@@ -259,9 +260,19 @@ public partial class MainWindow
     }
 
     private bool IsActiveRuntimeLog(string path)
-        => _llama.IsRunning
-           && !string.IsNullOrWhiteSpace(_llama.LogPath)
-           && string.Equals(LogFileService.NormalizePath(path), LogFileService.NormalizePath(_llama.LogPath), StringComparison.OrdinalIgnoreCase);
+    {
+        var normalized = LogFileService.NormalizePath(path);
+        return _sessions.Snapshots().Any(session =>
+            session.IsRunning
+            && !string.IsNullOrWhiteSpace(session.LogPath)
+            && string.Equals(normalized, LogFileService.NormalizePath(session.LogPath), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string[] ActiveRuntimeLogPaths()
+        => _sessions.Snapshots()
+            .Where(session => session.IsRunning && !string.IsNullOrWhiteSpace(session.LogPath))
+            .Select(session => session.LogPath)
+            .ToArray();
 
     private bool TryValidateLogFileForOpen(string path, out string error)
     {

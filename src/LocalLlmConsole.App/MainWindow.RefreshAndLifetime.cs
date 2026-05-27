@@ -30,9 +30,11 @@ public partial class MainWindow
     private async Task RefreshModelsAsync()
     {
         if (_stateStore is null) return;
+        if (_catalog is not null)
+            await _catalog.CleanupModelRecordsAsync();
         var selectedId = SelectedModel()?.Id;
         var models = await _stateStore.ListModelsAsync();
-        _viewModel.Models.ReplaceModels(models, IsModelActive);
+        _viewModel.Models.ReplaceModels(models, IsModelLoaded);
         if (_modelsGrid is not null && _viewModel.Models.Rows.Count > 0)
         {
             _modelsGrid.SelectedItem = _viewModel.Models.Rows.FirstOrDefault(row => string.Equals(row.Model.Id, selectedId, StringComparison.OrdinalIgnoreCase))
@@ -48,6 +50,8 @@ public partial class MainWindow
         if (_stateStore is null) return;
         var selectedId = SelectedRuntime()?.Id;
         var runtimes = await _stateStore.ListRuntimesAsync();
+        if (await RuntimeEquivalenceService.ReconcileOfficialRuntimeEquivalenceAsync(_stateStore, runtimes))
+            runtimes = await _stateStore.ListRuntimesAsync();
         var sources = await Task.Run(() => RuntimeSources().ToList());
         var modelsByRuntime = await ModelsByRuntimeAsync();
         _viewModel.Runtimes.ReplaceRuntimes(runtimes, sources, modelsByRuntime, IsRuntimeActivelyUsed);
@@ -57,6 +61,7 @@ public partial class MainWindow
                 ? null
                 : _viewModel.Runtimes.Rows.FirstOrDefault(row => string.Equals(row.Runtime?.Id, selectedId, StringComparison.OrdinalIgnoreCase));
         }
+        RefreshRuntimePackagePresets(runtimes);
         RefreshRuntimeBuildPresets(runtimes, sources);
         await RefreshRuntimeSelectorAsync(runtimes: runtimes);
     }

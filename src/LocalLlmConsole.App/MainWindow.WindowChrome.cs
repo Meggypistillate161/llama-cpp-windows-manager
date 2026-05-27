@@ -210,7 +210,7 @@ public partial class MainWindow
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
         }
-        catch {}
+        catch { }
         _trayIcon = null;
     }
 }

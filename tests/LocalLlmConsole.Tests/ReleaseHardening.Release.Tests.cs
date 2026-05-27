@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -9,14 +9,14 @@ namespace LocalLlmConsole.Tests;
 public sealed partial class ReleaseHardeningTests
 {
     [Fact]
-    public void ProjectDeclaresVersionOneMetadata()
+    public void ProjectDeclaresVersionOneOneMetadata()
     {
         var project = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "LocalLlmConsole.App.csproj"));
 
-        Assert.Contains("<Version>1.0.0</Version>", project, StringComparison.Ordinal);
-        Assert.Contains("<AssemblyVersion>1.0.0.0</AssemblyVersion>", project, StringComparison.Ordinal);
-        Assert.Contains("<FileVersion>1.0.0.0</FileVersion>", project, StringComparison.Ordinal);
-        Assert.Contains("<InformationalVersion>v1.0</InformationalVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<Version>1.1.0</Version>", project, StringComparison.Ordinal);
+        Assert.Contains("<AssemblyVersion>1.1.0.0</AssemblyVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<FileVersion>1.1.0.0</FileVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<InformationalVersion>v1.1</InformationalVersion>", project, StringComparison.Ordinal);
     }
 
 
@@ -188,6 +188,76 @@ public sealed partial class ReleaseHardeningTests
                 service.StageInstallAsync(update, temp, Path.Combine(temp, "LlamaCppConsole.exe"), TestContext.Current.CancellationToken));
 
             Assert.Contains("SHA-256 companion", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AppUpdateServiceRejectsMalformedChecksumCompanion()
+    {
+        var temp = CreateTempRoot();
+        using var handler = new CapturingHttpHandler(request =>
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            response.Content = new ByteArrayContent(request.RequestUri?.AbsolutePath.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase) == true
+                ? System.Text.Encoding.UTF8.GetBytes("not-a-checksum  LlamaCppConsole.exe")
+                : new byte[1024 * 1024]);
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var service = new AppUpdateService(http);
+        var update = new AppUpdateInfo(
+            true,
+            "v1.0",
+            "v1.1.0",
+            "v1.1.0",
+            "",
+            "https://example.invalid/release",
+            "LlamaCppConsole.exe",
+            "https://example.invalid/LlamaCppConsole.exe",
+            1024 * 1024,
+            "LlamaCppConsole.exe.sha256",
+            "https://example.invalid/LlamaCppConsole.exe.sha256");
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.StageInstallAsync(update, temp, Path.Combine(temp, "LlamaCppConsole.exe"), TestContext.Current.CancellationToken));
+
+            Assert.Contains("does not contain a checksum", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AppUpdateServiceRejectsInvalidInlineChecksum()
+    {
+        var temp = CreateTempRoot();
+        var service = new AppUpdateService(new HttpClient());
+        var update = new AppUpdateInfo(
+            true,
+            "v1.0",
+            "v1.1.0",
+            "v1.1.0",
+            "",
+            "https://example.invalid/release",
+            "LlamaCppConsole.exe",
+            "https://example.invalid/LlamaCppConsole.exe",
+            1024 * 1024,
+            ExpectedSha256: "not-a-sha256");
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.StageInstallAsync(update, temp, Path.Combine(temp, "LlamaCppConsole.exe"), TestContext.Current.CancellationToken));
+
+            Assert.Contains("invalid SHA-256", ex.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

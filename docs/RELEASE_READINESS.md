@@ -1,6 +1,6 @@
 # Release Readiness Checklist
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 ## Automated Gate
 
@@ -24,7 +24,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 ## Release Gate
 
 - Publish `dist\LlamaCppConsole-win-x64\LlamaCppConsole.exe` from a clean checkout.
-- Build `dist\installer\LlamaCppConsole-Setup-1.0.0-win-x64.exe` from the published app with Inno Setup 6.
+- Build `dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe` from the published app with Inno Setup 6.
 - Confirm the publish folder contains no `.pdb` files.
 - Confirm the published executable and installer each have a matching `.sha256` companion file. For signed builds, generate the companion file after signing.
 - Confirm fresh installer default path is `D:\LlamaCppConsole` when `D:` exists, `%LocalAppData%\Programs\LlamaCppConsole` when it does not, and that the setup wizard still allows the user to change the install folder.
@@ -34,7 +34,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm uninstall keeps `data` by default and only deletes it when the user explicitly chooses to delete app data.
 - Launch the published app on a clean Windows user profile with no repository checkout.
 - Confirm only one app instance can run in the same user session.
-- Confirm WSL is installed and the configured Ubuntu distro exists, or missing prerequisites are reported clearly.
+- Confirm Runtime Downloads can check the upstream official llama.cpp release feed and list the official prebuilt packages for CUDA Windows, CUDA WSL, Vulkan Windows, Vulkan WSL, Intel Arc SYCL Windows, Intel Arc SYCL WSL, CPU Windows, and CPU WSL.
+- Confirm installing an official prebuilt runtime does not require Git, CMake, Visual Studio Build Tools, WSL build tools, or source checkout.
+- Confirm installed official prebuilt runtimes are registered, can be selected per model, and show update/delete state on the Runtime Downloads page.
+- Confirm official prebuilt CUDA downloads include the matching runtime DLL/archive companion when upstream publishes one.
+- Confirm source-built official runtimes can be reconciled with matching prebuilt runtimes by local runtime fingerprint.
+- Confirm WSL is installed and the configured Ubuntu distro exists when a WSL runtime or WSL source build is selected, or missing prerequisites are reported clearly.
 - Confirm the WSL Linux page detects `wsl.exe`, installed distros, the WSL default distro, and the app-selected distro.
 - Confirm Docker-managed WSL distros such as `docker-desktop` are not shown as selectable runtime distros.
 - Confirm the app prefers an installed Ubuntu distro instead of keeping a missing hardcoded distro.
@@ -44,7 +49,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm the WSL Linux page offers an Install CPU Tools action for existing Ubuntu distros and does not imply CUDA is installed.
 - Confirm the WSL Linux page offers an Install CUDA action for existing Ubuntu distros and that it verifies `nvcc` and `libcudart`.
 - Confirm the WSL Linux page offers an Install Vulkan action for existing Ubuntu distros and that it verifies `vulkaninfo --summary`.
-- Confirm CPU/CUDA/Vulkan actions switch to Update when detected and show Delete actions only when detected.
+- Confirm the WSL Linux page offers Intel GPU runtime and Intel oneAPI actions for existing Ubuntu distros and that they verify `sycl-ls`/Level Zero visibility for SYCL.
+- Confirm the Windows page detects Git, CMake, MSVC, CUDA, Vulkan, Intel oneAPI/SYCL tools, and whether an Intel GPU is visible to `sycl-ls`.
+- Confirm CPU/CUDA/Vulkan/SYCL actions switch to Update/Repair when detected and show Delete actions only when detected.
 - Confirm Delete WSL and Delete Ubuntu actions require explicit confirmation and open visible PowerShell.
 - Confirm WSL and Ubuntu update checks appear when those components are installed.
 - Confirm the WSL row shows Install WSL when WSL is missing and Update WSL when WSL exists.
@@ -74,9 +81,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm vision-capable model settings persist image min/max token allowances and launch `llama-server` with `--image-min-tokens` / `--image-max-tokens` when set.
 - Confirm downloaded runtime source and build deletion cannot escape the configured runtimes folder.
 - Confirm successful builds from downloaded runtime sources delete the source folder when Settings > Runtime > Delete source after build is `Yes`, and preserve it when set to `No`.
-- Confirm CPU-only Ubuntu/WSL llama.cpp build path succeeds after Install CPU Tools, or fails early if Git/CMake/compiler tools are still missing inside Ubuntu.
-- Confirm CUDA Ubuntu/WSL llama.cpp build path succeeds after Install CUDA on supported NVIDIA hardware, or fails early with a clear driver/toolkit error.
-- Confirm Vulkan Ubuntu/WSL llama.cpp build path succeeds after Install Vulkan on supported WSL Vulkan hardware, or fails early with a clear driver/toolkit error.
+- Confirm multiple models can be loaded at the same time on different saved model ports when hardware capacity allows it.
+- Confirm OpenCode local model entries keep separate providers/endpoints for concurrently served models and remain stable across app restarts.
+- Confirm CPU-only Ubuntu/WSL llama.cpp source build path succeeds after Install CPU Tools, or fails early if Git/CMake/compiler tools are still missing inside Ubuntu.
+- Confirm CUDA Ubuntu/WSL llama.cpp source build path succeeds after Install CUDA on supported NVIDIA hardware, or fails early with a clear driver/toolkit error.
+- Confirm Vulkan Ubuntu/WSL llama.cpp source build path succeeds after Install Vulkan on supported WSL Vulkan hardware, or fails early with a clear driver/toolkit error.
+- Confirm Intel Arc SYCL Windows and WSL launches/source builds fail early with clear oneAPI/SYCL prerequisite messages when tools or Level Zero GPU visibility are missing.
 - Confirm custom runtime repository row can add an HTTPS repo and then download/check/delete it from Runtime Repositories.
 - Confirm CUDA runtime builds fail before CMake with a clear message when `nvcc` or `libcudart`/CUDA Toolkit runtime libraries are missing inside the selected WSL distro.
 - Confirm Vulkan runtime builds fail before CMake with a clear message when Vulkan headers, `glslc`, `vulkaninfo`, `libvulkan.so`, SPIR-V headers, or a WSL-visible Vulkan device are unavailable.
@@ -90,7 +100,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 ## Manual Clean-Machine Test
 
 1. Start from a clean Windows VM.
-2. Install `dist\installer\LlamaCppConsole-Setup-1.0.0-win-x64.exe`.
+2. Install `dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe`.
 3. Confirm the installer prefers `D:\LlamaCppConsole` when `D:` exists and allows choosing a different folder before install.
 4. Confirm the launch-after-install option opens the app.
 5. Confirm first launch creates `data\models`, `data\runtimes`, `data\cache`, `data\state`, and `data\logs` beside the exe when the install folder is writable.
@@ -100,16 +110,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 9. Confirm launching from a non-writable location falls back to `%LocalAppData%\llama.cpp Console`, reuses `%LocalAppData%\LocalLlmConsole` only for an existing legacy folder, or reports a clear workspace error.
 10. Launch the app without Git, CMake, CUDA, or OpenCode.
 11. Verify the app opens, creates state, and explains missing Ubuntu/WSL prerequisites without crashing.
-12. Use the WSL Linux page to install or detect Ubuntu.
-13. Use Install CPU Tools to install Git, CMake, and build tools inside Ubuntu, then validate CPU-only WSL build preflight.
-14. Try a CUDA build without CUDA Toolkit inside Ubuntu/WSL and confirm the app reports that the WSL CUDA Toolkit is missing before CMake runs.
-15. Try a Vulkan build without Vulkan tools or a WSL-visible Vulkan device and confirm the app reports the missing Vulkan prerequisite before CMake runs.
-16. Change the selected distro and validate missing-distro errors.
-17. Download a small GGUF, interrupt the app mid-download, relaunch, and verify job recovery.
-18. Import an external model folder, delete the registration, and verify GGUF files remain.
-19. Add a downloaded app-owned model, delete it, and verify only app-owned paths are removed.
-20. Verify the OpenCode page remains optional and does not block core workflows.
-21. Verify app update checks can reach the GitHub release feed, and that update install works from a copied portable exe folder.
+12. Use Runtime Downloads to install an official prebuilt CPU Windows runtime, then confirm it appears in model launch runtime choices.
+13. On suitable hardware, repeat Runtime Downloads for CUDA, Vulkan, or Intel Arc SYCL Windows/WSL packages.
+14. Use the WSL Linux page to install or detect Ubuntu only when testing WSL runtimes or source builds.
+15. Use Install CPU Tools to install Git, CMake, and build tools inside Ubuntu, then validate CPU-only WSL source-build preflight.
+16. Try a CUDA source build without CUDA Toolkit inside Ubuntu/WSL and confirm the app reports that the WSL CUDA Toolkit is missing before CMake runs.
+17. Try a Vulkan source build without Vulkan tools or a WSL-visible Vulkan device and confirm the app reports the missing Vulkan prerequisite before CMake runs.
+18. Try a SYCL launch/source build without oneAPI or a Level Zero-visible Intel GPU and confirm the app reports the missing Intel Arc prerequisite.
+19. Change the selected distro and validate missing-distro errors.
+20. Download a small GGUF, interrupt the app mid-download, relaunch, and verify job recovery.
+21. Load two small models on different saved ports and confirm both endpoints remain reachable.
+22. Import an external model folder, delete the registration, and verify GGUF files remain.
+23. Add a downloaded app-owned model, delete it, and verify only app-owned paths are removed.
+24. Verify the OpenCode page remains optional and does not block core workflows.
+25. Verify app update checks can reach the GitHub release feed, and that update install works from a copied portable exe folder.
 
 ## Release Blockers
 

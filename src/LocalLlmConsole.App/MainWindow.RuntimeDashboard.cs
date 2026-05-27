@@ -33,22 +33,61 @@ public partial class MainWindow
 
     private async Task RefreshOverviewAsync()
     {
-        await Task.CompletedTask;
+        await MarkLoadedSessionsIfReadyAsync();
         UpdateFolderText(_modelsFolderText, _settings.ModelsRoot);
         UpdateFolderText(_runtimesFolderText, _settings.RuntimeRoot);
+        _viewModel.Overview.ReplaceSessions(_sessions.Snapshots());
+        _loadedSessionsGrid?.Items.Refresh();
     }
 
     private async Task RefreshRuntimeMetricsAsync()
     {
-        if (_runtimeDashboardModel is null && _runtimeMetricsGrid is null && _overviewRuntimeLogBox is null) return;
+        if (!_sessions.HasRunningSessions && _runtimeDashboardModel is null && _runtimeMetricsGrid is null && _overviewRuntimeLogBox is null) return;
         if (_runtimeDashboardRefreshInFlight) return;
 
         _runtimeDashboardRefreshInFlight = true;
         try
         {
             var renderOverview = _viewModel.CurrentPage == "Overview";
-            var metricsSettings = _activeRuntimeSettings ?? _settings;
-            await MarkRuntimeLoadedIfReadyAsync(metricsSettings);
+            await MarkLoadedSessionsIfReadyAsync();
+            var selectedOverviewModel = SelectedOverviewModel();
+            if (selectedOverviewModel is not null && !IsModelActive(selectedOverviewModel) && IsModelLoaded(selectedOverviewModel))
+            {
+                _sessions.SelectModel(selectedOverviewModel.Id);
+                _activeRuntimeSettings = _sessions.ActiveSettings;
+            }
+
+            var pollResults = await PollRuntimeMetricsForSessionsAsync(_sessions.Snapshots()
+                .Where(session => session is { IsRunning: true, Status: LoadedModelSessionStatus.Running or LoadedModelSessionStatus.Warm })
+                .ToArray());
+            await TrackLifetimeTokenDeltasAsync(pollResults);
+            await ApplyIdleUnloadPoliciesAsync(pollResults);
+
+            if (selectedOverviewModel is not null && _sessions.SessionForModel(selectedOverviewModel.Id) is not { IsRunning: true })
+            {
+                ResetMetricCounters();
+                if (renderOverview)
+                {
+                    SetMetricText(_runtimeDashboardModel, $"Stopped: {selectedOverviewModel.Name}");
+                    SetMetricText(_runtimeDashboardRuntime, "No loaded runtime");
+                    SetRuntimeModelProgress(LlamaRuntimeState.Stopped);
+                    SetMetricText(_runtimeDashboardGpu, await CachedGpuSummaryAsync());
+                    if (_overviewRuntimeLogBox is not null)
+                        _overviewRuntimeLogBox.Text = "No runtime is loaded for the selected model.";
+                    PopulateRuntimeMetricRows([]);
+                    SetRuntimeMetricSummary("No runtime", "0", "Context No runtime\nKV cache No runtime");
+                }
+                return;
+            }
+
+            var selectedSession = selectedOverviewModel is null
+                ? _sessions.SelectedSnapshot()
+                : _sessions.SessionForModel(selectedOverviewModel.Id);
+            var metricsSettings = selectedSession?.LaunchSettings ?? _sessions.ActiveSettings ?? _activeRuntimeSettings ?? _settings;
+            var runtimeKey = selectedSession is null ? CurrentRuntimeMetricKey(metricsSettings) : RuntimeMetricKey(selectedSession);
+            var selectedPollResult = selectedSession is null
+                ? null
+                : pollResults.FirstOrDefault(result => string.Equals(result.RuntimeKey, runtimeKey, StringComparison.Ordinal));
             var (modelName, runtimeName) = await ActiveRuntimeLabelsAsync();
             if (renderOverview)
             {
@@ -56,18 +95,16 @@ public partial class MainWindow
                 SetMetricText(_runtimeDashboardRuntime, runtimeName, emphasizeLoadedStatus: _llama.IsRunning);
             }
             if (_llama.State == LlamaRuntimeState.Failed)
-                ClearActiveRuntimeSession();
+                await SaveActiveRuntimeSessionsAsync();
             if (renderOverview)
             {
                 UpdateRuntimeModelProgress();
                 SetMetricText(_runtimeDashboardGpu, await CachedGpuSummaryAsync());
             }
 
-            if (!_llama.IsRunning)
+            if (selectedSession is not { IsRunning: true })
             {
                 ResetMetricCounters();
-                ResetLifetimeCounters();
-                ResetIdleCounters();
                 if (renderOverview)
                 {
                     RefreshRuntimeLogTail();
@@ -77,29 +114,26 @@ public partial class MainWindow
                 return;
             }
 
-            var slotSnapshot = await RuntimeSlotSnapshotAsync(metricsSettings);
+            var slotSnapshot = selectedPollResult?.SlotSnapshot;
             if (renderOverview) RefreshRuntimeLogTail(slotSnapshot);
             if (!metricsSettings.EnableMetrics)
             {
                 ResetMetricCounters();
                 if (renderOverview) PopulateRuntimeMetricRows([]);
-                await ApplyRuntimeMetricSummaryAsync([], metricsSettings, slotSnapshot);
+                await ApplyRuntimeMetricSummaryAsync([], metricsSettings, slotSnapshot, runtimeKey);
                 return;
             }
 
-            try
+            if (selectedPollResult is { Samples.Count: > 0 })
             {
-                var uri = new Uri($"{RuntimeEndpointService.LocalServerBaseUrl(metricsSettings)}/metrics");
-                var raw = await RuntimeEndpointService.RuntimeGetStringAsync(_metricsClient, uri.ToString(), metricsSettings);
-                var samples = RuntimeMetrics.ParsePrometheus(raw);
-                if (renderOverview) PopulateRuntimeMetricRows(samples);
-                await ApplyRuntimeMetricSummaryAsync(samples, metricsSettings, slotSnapshot);
+                if (renderOverview) PopulateRuntimeMetricRows(selectedPollResult.Samples);
+                await ApplyRuntimeMetricSummaryAsync(selectedPollResult.Samples, metricsSettings, slotSnapshot, runtimeKey);
             }
-            catch (Exception ex)
+            else
             {
                 if (renderOverview)
-                    PopulateRuntimeMetricRowsOrLastKnown(ex.Message);
-                await ApplyRuntimeMetricSummaryAsync([], metricsSettings, slotSnapshot);
+                    PopulateRuntimeMetricRowsOrLastKnown(selectedPollResult?.Error ?? "No metrics response.", runtimeKey);
+                await ApplyRuntimeMetricSummaryAsync([], metricsSettings, slotSnapshot, runtimeKey);
             }
         }
         finally
@@ -107,6 +141,37 @@ public partial class MainWindow
             _runtimeDashboardRefreshInFlight = false;
             UpdateOverviewModelActions();
             UpdateModelActionButtons();
+        }
+    }
+
+    private async Task<IReadOnlyList<RuntimeMetricPollResult>> PollRuntimeMetricsForSessionsAsync(IReadOnlyList<LoadedModelSessionSnapshot> sessions)
+    {
+        if (sessions.Count == 0)
+        {
+            _lifetimeTokenCounters.RetainRuntimeKeys([]);
+            return [];
+        }
+
+        return await Task.WhenAll(sessions.Select(PollRuntimeMetricsForSessionAsync));
+    }
+
+    private async Task<RuntimeMetricPollResult> PollRuntimeMetricsForSessionAsync(LoadedModelSessionSnapshot session)
+    {
+        var runtimeKey = RuntimeMetricKey(session);
+        var settings = session.LaunchSettings;
+        var slotTask = RuntimeSlotSnapshotAsync(settings);
+        if (!settings.EnableMetrics)
+            return new RuntimeMetricPollResult(session, runtimeKey, [], await slotTask, "");
+
+        try
+        {
+            var uri = new Uri($"{RuntimeEndpointService.LocalServerBaseUrl(settings)}/metrics");
+            var raw = await RuntimeEndpointService.RuntimeGetStringAsync(_metricsClient, uri.ToString(), settings);
+            return new RuntimeMetricPollResult(session, runtimeKey, RuntimeMetrics.ParsePrometheus(raw), await slotTask, "");
+        }
+        catch (Exception ex)
+        {
+            return new RuntimeMetricPollResult(session, runtimeKey, [], await slotTask, ex.Message);
         }
     }
 

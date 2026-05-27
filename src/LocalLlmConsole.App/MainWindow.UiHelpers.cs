@@ -42,27 +42,6 @@ public partial class MainWindow
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, size >= 18 ? 10 : 0, 0, size >= 18 ? 10 : 8)
     };
-    private void SetActiveNavigation(string title)
-    {
-        foreach (var button in new[] { OverviewNavButton, ModelsNavButton, RuntimesNavButton, WslLinuxNavButton, SettingsNavButton, OpenCodeNavButton, LifetimeNavButton, LogsNavButton, UpdatesNavButton, HelpNavButton })
-            button.Tag = null;
-
-        var active = title switch
-        {
-            "Overview" => OverviewNavButton,
-            "Models" => ModelsNavButton,
-            "Runtimes" => RuntimesNavButton,
-            "WSL Linux" => WslLinuxNavButton,
-            "Settings" => SettingsNavButton,
-            "OpenCode" => OpenCodeNavButton,
-            "Lifetime" => LifetimeNavButton,
-            "Logs" => LogsNavButton,
-            "Updates" => UpdatesNavButton,
-            "Help" => HelpNavButton,
-            _ => null
-        };
-        if (active is not null) active.Tag = "Active";
-    }
     private static Grid AddMetric(Grid grid, string label, int row, int column)
         => AddMetric(grid, label, row, column, includeProgress: false, out _);
 
@@ -219,77 +198,6 @@ public partial class MainWindow
         ToolTipService.SetShowOnDisabled(button, true);
     }
 
-    private void ApplyStaticButtonToolTips()
-    {
-        SetButtonToolTip(MinimizeButton, "Minimize the app window.");
-        SetButtonToolTip(MaximizeButton, "Maximize or restore the app window.");
-        SetButtonToolTip(CloseButton, "Close the app. Running models and downloads will be handled safely.");
-        SetButtonToolTip(OverviewNavButton, "Open the model loading dashboard.");
-        SetButtonToolTip(ModelsNavButton, "Open local models, Hugging Face search, and launch settings.");
-        SetButtonToolTip(RuntimesNavButton, "Open llama.cpp source downloads, builds, and runtime jobs.");
-        SetButtonToolTip(WslLinuxNavButton, "Open WSL, Ubuntu, and toolkit setup actions.");
-        SetButtonToolTip(SettingsNavButton, "Open app preferences.");
-        SetButtonToolTip(OpenCodeNavButton, "Open OpenCode model and agent configuration.");
-        SetButtonToolTip(LifetimeNavButton, "Open persisted lifetime token counters.");
-        SetButtonToolTip(LogsNavButton, "Open app, runtime, and job logs.");
-        SetButtonToolTip(UpdatesNavButton, "Check for app updates from GitHub releases.");
-        SetButtonToolTip(HelpNavButton, "Open first-run setup steps.");
-    }
-
-    private static string ButtonToolTip(string text)
-    {
-        var label = (text ?? "").Trim();
-        return label switch
-        {
-            "Load" => "Load the selected model with its saved launch settings.",
-            "Unload" => "Stop the currently loading or loaded model and free runtime resources.",
-            "Save For Model" => "Save these launch settings for the selected model.",
-            "Save As Default" => "Save these launch settings as the default for new models.",
-            "Reset Defaults" => "Restore launch settings to the app defaults.",
-            "Refresh Logs" => "Reload the log file list.",
-            "Open Selected" => "Open the selected log file.",
-            "Open Logs Folder" => "Open the app logs folder in File Explorer.",
-            "Delete Selected" => "Delete the selected log files when they are safe to remove.",
-            "Delete All Logs" => "Delete all removable log files.",
-            "Detect Files" => "Find OpenCode config and agents files automatically.",
-            "Choose Config" => "Choose the OpenCode provider config file.",
-            "Choose Agents Folder" => "Choose the OpenCode agents folder.",
-            "Update Config" => "Save changes to the selected OpenCode model config.",
-            "Delete Config" => "Delete the selected OpenCode model config.",
-            "Add" => "Add the selected item.",
-            "Update" => "Update the selected item.",
-            "Add As New" => "Add this model as a new OpenCode config entry.",
-            "Save Agent" => "Save changes to the selected OpenCode agent.",
-            "Delete Agent" => "Delete the selected OpenCode agent.",
-            "Create Agent" => "Create a new OpenCode agent from the current draft.",
-            "Search Hugging Face" => "Search Hugging Face for GGUF model files.",
-            "History" => "Show model download history and controls.",
-            "Save Settings" => "Save the current app preferences.",
-            "Open GitHub" => "Open the app's GitHub repository in your browser.",
-            "Refresh" => "Refresh the current page.",
-            "Choose" => "Choose a folder.",
-            "Open" => "Open this folder.",
-            "Scan Models Folder" => "Scan the models folder for local GGUF files.",
-            "Install WSL" => "Install Windows Subsystem for Linux.",
-            "Update WSL" => "Check for WSL updates.",
-            "Delete WSL" => "Remove the WSL feature from this machine.",
-            "Install Ubuntu" => "Install the recommended Ubuntu distro for WSL builds.",
-            "Update Ubuntu" => "Update packages in the selected Ubuntu distro.",
-            "Delete Ubuntu" => "Remove the selected Ubuntu distro.",
-            "Install CPU Tools" => "Install CPU build tools in the selected Ubuntu distro.",
-            "Install CUDA" => "Install NVIDIA CUDA Toolkit packages in Ubuntu.",
-            "Install Vulkan" => "Install Vulkan build and runtime tools in Ubuntu.",
-            "Open WSL Linux" => "Open WSL Linux setup actions.",
-            "Open Runtimes" => "Open runtime source download and build actions.",
-            "Open Models" => "Open model search, download, and launch settings.",
-            "Open Overview" => "Open the model loading dashboard.",
-            "Open OpenCode" => "Open OpenCode setup actions.",
-            _ when label.StartsWith("Install ", StringComparison.OrdinalIgnoreCase) => $"Run {label}.",
-            _ when label.StartsWith("Delete ", StringComparison.OrdinalIgnoreCase) => $"Run {label}.",
-            _ when label.StartsWith("Check", StringComparison.OrdinalIgnoreCase) => label,
-            _ => string.IsNullOrWhiteSpace(label) ? "" : $"Run {label}."
-        };
-    }
     private static string? PickFolder(string initial)
     {
         using var dialog = new Forms.FolderBrowserDialog { SelectedPath = Directory.Exists(initial) ? initial : "" };
@@ -317,6 +225,9 @@ public partial class MainWindow
         for (var i = 0; i < lines.Length; i++)
         {
             target.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            if (TryAddStatusNameMetricLine(target, lines[i], emphasizeLoadedStatus, i))
+                continue;
+
             if (MetricShouldRenderNeutralStatus(target, lines[i]))
             {
                 var neutralBlock = MetricPlainValueBlock(lines[i].Trim(), compact: false);
@@ -326,9 +237,6 @@ public partial class MainWindow
                 target.Children.Add(neutralBlock);
                 continue;
             }
-
-            if (TryAddStatusNameMetricLine(target, lines[i], emphasizeLoadedStatus, i))
-                continue;
 
             if (MetricShouldEmphasizeWholeLine(target, lines[i], emphasizeLoadedStatus))
             {
@@ -385,37 +293,59 @@ public partial class MainWindow
         if (target.Tag is not string label) return false;
         var text = line.Trim();
         if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!IsStatusNameMetricLabel(label)) return false;
+
+        if (IsNeutralMetricStatus(text))
+        {
+            AddSpanningMetricBlock(target, MetricPlainValueBlock(text, compact: false), row);
+            return true;
+        }
 
         if (string.Equals(label, "Model status", StringComparison.Ordinal)
             && TrySplitModelStatusName(text, out var statusPrefix, out var modelName))
         {
-            var statusBlock = MetricStatusNameBlock(statusPrefix, modelName);
-            Grid.SetRow(statusBlock, row);
-            Grid.SetColumn(statusBlock, 0);
-            Grid.SetColumnSpan(statusBlock, 2);
-            target.Children.Add(statusBlock);
+            AddSpanningMetricBlock(target, MetricStatusNameBlock(statusPrefix, modelName), row);
             return true;
         }
 
-        if (string.Equals(label, "Runtime build", StringComparison.Ordinal) && emphasizeLoadedStatus)
+        if (string.Equals(label, "Model status", StringComparison.Ordinal))
         {
-            var statusBlock = MetricStatusNameBlock("", text);
-            Grid.SetRow(statusBlock, row);
-            Grid.SetColumn(statusBlock, 0);
-            Grid.SetColumnSpan(statusBlock, 2);
-            target.Children.Add(statusBlock);
+            AddSpanningMetricBlock(target, MetricPlainValueBlock(text, compact: false), row);
+            return true;
+        }
+
+        if (string.Equals(label, "Runtime build", StringComparison.Ordinal))
+        {
+            var runtimeBlock = emphasizeLoadedStatus && !LooksLikeEndpoint(text)
+                ? MetricStatusNameBlock("", text)
+                : MetricPlainValueBlock(text, compact: false);
+            AddSpanningMetricBlock(target, runtimeBlock, row);
             return true;
         }
 
         return false;
     }
 
+    private static void AddSpanningMetricBlock(Grid target, UIElement block, int row)
+    {
+        Grid.SetRow(block, row);
+        Grid.SetColumn(block, 0);
+        Grid.SetColumnSpan(block, 2);
+        target.Children.Add(block);
+    }
+
+    private static bool LooksLikeEndpoint(string text)
+        => text.Contains("://", StringComparison.Ordinal)
+           || text.StartsWith("localhost:", StringComparison.OrdinalIgnoreCase)
+           || text.StartsWith("127.0.0.1:", StringComparison.OrdinalIgnoreCase)
+           || text.StartsWith("0.0.0.0:", StringComparison.OrdinalIgnoreCase);
+
     private static bool TrySplitModelStatusName(string text, out string statusPrefix, out string modelName)
     {
         statusPrefix = "";
         modelName = "";
 
-        foreach (var prefix in new[] { "Loaded:", "Loading" })
+        foreach (var prefix in new[] { "Loaded:", "Loading", "Warm:", "Stopped:" })
         {
             if (!text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
             var separator = prefix.EndsWith(":", StringComparison.Ordinal) ? prefix.Length : prefix.Length;
@@ -454,10 +384,14 @@ public partial class MainWindow
         var normalized = text.Trim();
         return string.Equals(normalized, "None", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "Stopped", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Loading", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Loaded", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Warm", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "Unavailable", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "Unknown runtime", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "Unknown model", StringComparison.OrdinalIgnoreCase)
                || string.Equals(normalized, "No runtime", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "No loaded runtime", StringComparison.OrdinalIgnoreCase)
                || normalized.StartsWith("Failed", StringComparison.OrdinalIgnoreCase);
     }
 

@@ -11,10 +11,10 @@
     <AssemblyTitle>llama.cpp Console</AssemblyTitle>
     <Product>llama.cpp Console</Product>
     <RepositoryUrl>https://github.com/alekk89/llama.cpp-Console</RepositoryUrl>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>v1.0</InformationalVersion>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <InformationalVersion>v1.1</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>

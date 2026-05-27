@@ -160,14 +160,15 @@ public sealed partial class HuggingFaceService
                 else
                 {
                     if (File.Exists(partial)) TryDelete(partial);
-                    var projector = await TryDownloadVisionProjectorAsync(settings, payload.File, destination, CancellationToken.None);
-                    await RegisterDownloadedHuggingFaceModelAsync(settings, payload.File, destination, DateTimeOffset.UtcNow, recovered: true, projector);
-                    await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(payload with
-                    {
-                        DownloadedBytes = finalBytes,
-                        TotalBytes = expectedBytes > 0 ? expectedBytes : finalBytes,
-                        Error = projector.Error
-                    }, JsonOptions));
+                    await CompleteVerifiedPrimaryModelAsync(
+                        job,
+                        settings,
+                        payload.File,
+                        destination,
+                        expectedBytes > 0 ? expectedBytes : finalBytes,
+                        DateTimeOffset.UtcNow,
+                        recovered: true,
+                        CancellationToken.None);
                 }
                 continue;
             }

@@ -69,9 +69,9 @@ public static class AppPreferenceService
     public static string RuntimeHostForAccessMode(string accessMode)
         => ModelAccessMode(accessMode) == "lan" ? "0.0.0.0" : "127.0.0.1";
 
-    public static int IntValue(string text, int fallback)
-        => int.TryParse(text, out var value) ? value : fallback;
+    public static bool TryIntValue(string text, out int value)
+        => int.TryParse((text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
 
     public static int ClampedIntValue(string text, int fallback, int min, int max)
-        => Math.Clamp(IntValue(text, fallback), min, max);
+        => Math.Clamp(TryIntValue(text, out var value) ? value : fallback, min, max);
 }

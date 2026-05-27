@@ -4,6 +4,7 @@ public sealed class ModelGridRow
 {
     public required string Name { get; init; }
     public required string Quant { get; init; }
+    public required string Size { get; init; }
     public string OpenFolderAction { get; init; } = "Open Folder";
     public string DeleteAction { get; init; } = "Delete";
     public string OpenFolderToolTip { get; init; } = "Open the folder containing this model file.";
@@ -55,4 +56,23 @@ public sealed class RuntimeBuildPresetRow
     public bool CanDelete { get; set; }
     public bool IsCustomAdd { get; init; }
     public RuntimeBuildPreset? Preset { get; init; }
+}
+
+public sealed class RuntimePackagePresetRow
+{
+    public string Label { get; set; } = "";
+    public string Backend { get; set; } = "";
+    public string LocalStatus { get; set; } = "";
+    public string LatestRelease { get; set; } = "";
+    public string Assets { get; set; } = "";
+    public string InstallAction { get; set; } = "";
+    public string CheckAction { get; set; } = "Check";
+    public string DeleteAction { get; set; } = "Delete All";
+    public string InstallToolTip { get; set; } = "";
+    public string CheckToolTip { get; set; } = "";
+    public string DeleteToolTip { get; set; } = "";
+    public bool CanInstall { get; set; }
+    public bool CanCheck { get; set; } = true;
+    public bool CanDelete { get; set; }
+    public RuntimePackagePreset? Preset { get; init; }
 }

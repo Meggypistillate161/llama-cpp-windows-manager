@@ -1,7 +1,7 @@
 # Signing Windows Releases
 
 Trusted Windows releases should be Authenticode-signed and timestamped before
-upload. The current v1.0.0 community release is unsigned and should be described
+upload. The current v1.1.0 community release is unsigned and should be described
 as unsigned wherever it is linked. The release scripts support signing with a
 certificate already available in the Windows certificate store:
 

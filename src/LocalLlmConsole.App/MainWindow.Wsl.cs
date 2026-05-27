@@ -47,6 +47,9 @@ public partial class MainWindow
 
         root.Children.Add(Scroll(body, new Thickness(16)));
         PageHost.Content = root;
+        if (_cachedWslReport is not null && _cachedWslTools is not null)
+            PopulateWslLinuxPage(_cachedWslReport, _cachedWslTools);
+
         ApplyPendingHelpFocus();
         if (!_wslLinuxAutoRefreshDone)
         {
@@ -109,6 +112,24 @@ public partial class MainWindow
             out _wslDeleteVulkanToolsButton,
             "Delete",
             async (_, _) => await DeleteUbuntuVulkanToolsAsync()));
+        panel.Children.Add(WslToolActionRow(
+            "Intel GPU runtime",
+            $"Install Intel Level Zero/OpenCL runtime packages ({WslSetupCommands.SyclRuntimePackages}) inside the selected Ubuntu distro for Intel Arc SYCL runtimes.",
+            out _wslInstallSyclRuntimeButton,
+            "Install Intel GPU",
+            async (_, _) => await InstallUbuntuSyclRuntimeAsync(),
+            out _wslDeleteSyclRuntimeButton,
+            "Delete",
+            async (_, _) => await DeleteUbuntuSyclRuntimeAsync()));
+        panel.Children.Add(WslToolActionRow(
+            "Intel oneAPI",
+            $"Install Intel oneAPI DPC++ compiler, MKL, and DNNL packages ({WslSetupCommands.SyclOneApiPackages}) inside the selected Ubuntu distro for llama.cpp SYCL builds.",
+            out _wslInstallSyclOneApiButton,
+            "Install oneAPI",
+            async (_, _) => await InstallUbuntuSyclOneApiAsync(),
+            out _wslDeleteSyclOneApiButton,
+            "Delete",
+            async (_, _) => await DeleteUbuntuSyclOneApiAsync()));
         return panel;
     }
 
@@ -212,6 +233,8 @@ public partial class MainWindow
             var report = await Task.Run(() => _wslEnvironment.DetectAsync());
             await ApplyDetectedWslDistroAsync(report);
             var tools = await DetectSelectedWslToolsAsync(report);
+            _cachedWslReport = report;
+            _cachedWslTools = tools;
             PopulateWslLinuxPage(report, tools);
             SetStatus(report.Status);
         });
@@ -289,17 +312,25 @@ public partial class MainWindow
         SetButtonVisibility(_wslInstallBuildToolsButton, report.WslExeFound && hasUbuntu);
         SetButtonVisibility(_wslInstallCudaToolkitButton, report.WslExeFound && hasUbuntu);
         SetButtonVisibility(_wslInstallVulkanToolsButton, report.WslExeFound && hasUbuntu);
+        SetButtonVisibility(_wslInstallSyclRuntimeButton, report.WslExeFound && hasUbuntu);
+        SetButtonVisibility(_wslInstallSyclOneApiButton, report.WslExeFound && hasUbuntu);
         SetButtonVisibility(_wslCheckUbuntuUpdatesButton, report.WslExeFound && hasUbuntu);
         SetButtonVisibility(_wslDeleteUbuntuButton, report.WslExeFound && hasUbuntu);
         SetButtonVisibility(_wslDeleteBuildToolsButton, report.WslExeFound && hasUbuntu && tools.CpuToolsInstalled);
         SetButtonVisibility(_wslDeleteCudaToolkitButton, report.WslExeFound && hasUbuntu && tools.CudaToolsInstalled);
         SetButtonVisibility(_wslDeleteVulkanToolsButton, report.WslExeFound && hasUbuntu && tools.VulkanToolsInstalled);
+        SetButtonVisibility(_wslDeleteSyclRuntimeButton, report.WslExeFound && hasUbuntu && tools.SyclToolsInstalled);
+        SetButtonVisibility(_wslDeleteSyclOneApiButton, report.WslExeFound && hasUbuntu && tools.SyclToolsInstalled);
         if (_wslInstallBuildToolsButton is not null)
             _wslInstallBuildToolsButton.Content = WslEnvironmentService.CpuToolsActionLabel(tools);
         if (_wslInstallCudaToolkitButton is not null)
             _wslInstallCudaToolkitButton.Content = WslEnvironmentService.CudaToolsActionLabel(tools);
         if (_wslInstallVulkanToolsButton is not null)
             _wslInstallVulkanToolsButton.Content = WslEnvironmentService.VulkanToolsActionLabel(tools);
+        if (_wslInstallSyclRuntimeButton is not null)
+            _wslInstallSyclRuntimeButton.Content = tools.SyclToolsInstalled ? "Update Intel GPU" : "Install Intel GPU";
+        if (_wslInstallSyclOneApiButton is not null)
+            _wslInstallSyclOneApiButton.Content = WslEnvironmentService.SyclToolsActionLabel(tools);
     }
 
     private static void SetButtonVisibility(WpfButton? button, bool visible)

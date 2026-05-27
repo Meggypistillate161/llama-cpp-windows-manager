@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -86,7 +86,6 @@ ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = ex
         Assert.Contains("CoreModels.cs", modelFileNames);
     }
 
-
     [Fact]
     public void GlobalUsingsDoNotLeakWpfIntoServices()
     {
@@ -107,6 +106,9 @@ ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = ex
         Assert.Contains("QueueRequest(context, cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("_requestHandlers", source, StringComparison.Ordinal);
         Assert.Contains("ObserveCompletionAsync", source, StringComparison.Ordinal);
+        Assert.Contains("LastListenerError", source, StringComparison.Ordinal);
+        Assert.Contains("_listenerErrorCount", source, StringComparison.Ordinal);
+        Assert.Contains("await Task.Delay(250, cancellationToken)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_ = Task.Run(() => HandleAsync", source, StringComparison.Ordinal);
     }
 
@@ -118,9 +120,12 @@ ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = ex
 
         var settings = AppSettings.CreateDefault(root);
         var modelSettings = ModelLaunchSettings.FromAppSettings(settings);
+        var applied = modelSettings.ApplyTo(settings with { Port = 9000 });
 
         Assert.Equal(131_072, settings.ContextSize);
         Assert.Equal(999, settings.GpuLayers);
+        Assert.Equal(8081, modelSettings.Port);
+        Assert.Equal(8081, applied.Port);
         Assert.Equal(4096, settings.BatchSize);
         Assert.Equal("q8_0", settings.CacheTypeK);
         Assert.Equal("q8_0", settings.CacheTypeV);
@@ -151,6 +156,13 @@ ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = ex
 
         Assert.Contains("private bool _showAdvancedLaunchSettings;", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private bool _showAdvancedLaunchSettings = true", source, StringComparison.Ordinal);
+        Assert.Contains("_launchPortBox = LaunchTextBox(_settings.Port);", source, StringComparison.Ordinal);
+        Assert.Contains("Fixed server port for this model", source, StringComparison.Ordinal);
+        Assert.Contains("ReadModelLaunchProfileAsync(model)", source, StringComparison.Ordinal);
+        Assert.Contains("DraftModelLaunchProfileAsync(model)", source, StringComparison.Ordinal);
+        Assert.Contains("EnsureModelLaunchProfileAsync(model)", source, StringComparison.Ordinal);
+        Assert.Contains("ModelLaunchPortAvailableAsync(model.Id, profile.Port)", source, StringComparison.Ordinal);
+        Assert.Contains("ModelPortAllocator.NextAvailable(_settings.Port, used)", source, StringComparison.Ordinal);
         Assert.Contains("panel.Children.Add(LaunchSection(\"Basic Launch\", basicGrid));", source, StringComparison.Ordinal);
         Assert.Contains("panel.Children.Add(LaunchSection(\"Performance & Memory\", memoryGrid));", source, StringComparison.Ordinal);
         Assert.Contains("panel.Children.Add(LaunchSection(\"Speculative / MTP\", speculativeGrid));", source, StringComparison.Ordinal);

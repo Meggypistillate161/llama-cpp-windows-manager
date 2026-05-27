@@ -15,12 +15,27 @@ public sealed class ModelsPageViewModel
             {
                 Name = model.Name,
                 Quant = ModelCatalogService.InferQuant(model.ModelPath),
+                Size = ModelSizeLabel(model.ModelPath),
                 CanDelete = !isModelActive(model),
                 DeleteToolTip = isModelActive(model)
                     ? "Unload this model before deleting it from disk."
                     : "Delete this model file and remove it from the catalog.",
                 Model = model
             });
+        }
+    }
+
+    private static string ModelSizeLabel(string modelPath)
+    {
+        try
+        {
+            return File.Exists(modelPath)
+                ? DisplayFormatService.Bytes(new FileInfo(modelPath).Length)
+                : "";
+        }
+        catch
+        {
+            return "";
         }
     }
 }

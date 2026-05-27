@@ -31,12 +31,13 @@ public sealed partial class ModelCatalogService
         var enrichedMetadata = await Task.Run(() => MergeGgufManifest(modelPath, metadataJson));
         var record = new ModelRecord(
             id,
-            string.IsNullOrWhiteSpace(modelName) ? FriendlyName(id) : modelName,
+            FriendlyDisplayName(modelName, modelPath),
             Path.GetFullPath(modelPath),
             OwnershipKind.AppOwned,
             enrichedMetadata,
             DateTimeOffset.UtcNow);
         await _store.UpsertModelAsync(record);
+        await RemoveDuplicateModelRecordsForPathAsync(record);
         await SeedLegacyLaunchSettingsAsync(record);
         return record;
     }
@@ -116,6 +117,7 @@ public sealed partial class ModelCatalogService
             var appOwned = existingForPath?.FirstOrDefault(model => model.Ownership == OwnershipKind.AppOwned);
             if (appOwned is not null)
             {
+                await RemoveDuplicateModelRecordsForPathAsync(appOwned);
                 await SeedLegacyLaunchSettingsAsync(appOwned);
                 records.Add(appOwned);
                 continue;
@@ -332,6 +334,16 @@ public sealed partial class ModelCatalogService
     internal static string FriendlyName(string value)
         => string.Join(" ", (value ?? "Local model").Replace('_', '-').Split('-', StringSplitOptions.RemoveEmptyEntries)
             .Select(part => part.Length == 0 ? part : char.ToUpperInvariant(part[0]) + part[1..]));
+
+    internal static string FriendlyDisplayName(string name, string modelPath)
+    {
+        var source = string.IsNullOrWhiteSpace(name)
+            ? Path.GetFileNameWithoutExtension(modelPath)
+            : name.Trim();
+        if (source.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+            source = Path.GetFileNameWithoutExtension(source);
+        return FriendlyName(source);
+    }
 
     internal static string InferQuant(string file)
     {

@@ -9,6 +9,18 @@ public static class WslSetupCommands
     public const string VulkanToolsPackages = "libvulkan-dev glslc spirv-headers vulkan-tools mesa-vulkan-drivers";
     public const string InstallVulkanToolsCommand = "set -e; sudo apt update; sudo apt install -y " + VulkanToolsPackages + "; vulkaninfo --summary";
     public const string RemoveVulkanToolsCommand = "set -e; sudo apt remove -y " + VulkanToolsPackages + "; sudo apt autoremove -y";
+    public const string SyclRuntimePackages = "libze1 libze-intel-gpu1 libze-dev intel-opencl-icd clinfo";
+    public const string InstallSyclRuntimeCommand = "set -e; sudo apt update; sudo apt install -y " + SyclRuntimePackages + "; clinfo -l || true";
+    public const string RemoveSyclRuntimeCommand = "set -e; sudo apt remove -y " + SyclRuntimePackages + "; sudo apt autoremove -y";
+    public const string SyclOneApiPackages = "intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel intel-oneapi-dnnl-devel";
+    public const string InstallSyclOneApiCommand =
+        "set -e; " +
+        "sudo apt-get update; sudo apt-get install -y wget ca-certificates gpg; " +
+        "wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg >/dev/null; " +
+        "echo 'deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneAPI.list; " +
+        "sudo apt-get update; sudo apt-get install -y " + SyclOneApiPackages + "; " +
+        "source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true; icpx --version | head -n 1; sycl-ls";
+    public const string RemoveSyclOneApiCommand = "set -e; sudo apt remove -y " + SyclOneApiPackages + "; sudo apt autoremove -y";
     public const string ToolProbeCommand = """
 set +e
 missing_cpu=""
@@ -70,6 +82,32 @@ else
   echo "VULKAN=0"
   echo "VULKAN_SUMMARY=Vulkan missing:${missing_vulkan}"
 fi
+
+sycl_icpx=
+if command -v icpx >/dev/null 2>&1; then
+  sycl_icpx=$(command -v icpx)
+elif [ -f /opt/intel/oneapi/setvars.sh ]; then
+  source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+  command -v icpx >/dev/null 2>&1 && sycl_icpx=$(command -v icpx)
+fi
+if [ -z "$sycl_icpx" ] && [ -x /opt/intel/oneapi/compiler/latest/bin/icpx ]; then
+  sycl_icpx=/opt/intel/oneapi/compiler/latest/bin/icpx
+fi
+if [ -n "$sycl_icpx" ]; then
+  sycl_out=$(sycl-ls 2>/dev/null || true)
+  sycl_device=$(printf '%s\n' "$sycl_out" | grep -i 'level_zero.*gpu' | head -n 1)
+  if [ -n "$sycl_device" ]; then
+    sycl_ver=$("$sycl_icpx" --version 2>/dev/null | head -n 1)
+    echo "SYCL=1"
+    echo "SYCL_SUMMARY=SYCL OK${sycl_ver:+, $sycl_ver}${sycl_device:+, $sycl_device}"
+  else
+    echo "SYCL=0"
+    echo "SYCL_SUMMARY=SYCL missing Level Zero GPU device"
+  fi
+else
+  echo "SYCL=0"
+  echo "SYCL_SUMMARY=SYCL missing icpx (oneAPI not installed)"
+fi
 """;
     public const string CudaToolkitPreflightCommand = """
 set -e
@@ -104,6 +142,30 @@ if ! vulkaninfo --summary; then
   echo "Install or update the Windows GPU driver with WSL Vulkan support, then retry." >&2
   exit 2
 fi
+""";
+    public const string SyclToolsPreflightCommand = """
+set -e
+if [ -f /opt/intel/oneapi/setvars.sh ]; then
+  source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+fi
+if ! command -v icx >/dev/null 2>&1; then
+  echo "Intel oneAPI C compiler icx was not found." >&2
+  exit 2
+fi
+if ! command -v icpx >/dev/null 2>&1; then
+  echo "Intel oneAPI DPC++ compiler icpx was not found." >&2
+  exit 2
+fi
+if ! command -v sycl-ls >/dev/null 2>&1; then
+  echo "sycl-ls was not found after sourcing oneAPI environment." >&2
+  exit 2
+fi
+icpx --version | head -n 1
+if ! sycl-ls 2>/dev/null | grep -qi 'level_zero.*gpu'; then
+  echo "No Level Zero Intel GPU device is visible to sycl-ls. Install Intel GPU runtime packages and make sure WSL can access the GPU." >&2
+  exit 2
+fi
+sycl-ls
 """;
     public const string CudaToolkitPackage = "cuda-toolkit-13-2";
     public const string CudaRemovePackages = "cuda-toolkit-13-2 cuda-compiler-13-2 cuda-cudart-13-2 cuda-cudart-dev-13-2 cuda-keyring";

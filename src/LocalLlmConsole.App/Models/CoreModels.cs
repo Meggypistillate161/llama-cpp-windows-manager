@@ -30,7 +30,17 @@ public enum RuntimeBackend
     Cpu,
     Cuda,
     Vulkan,
-    Metal
+    Metal,
+    Sycl
+}
+
+public enum LoadedModelSessionStatus
+{
+    Stopped,
+    Loading,
+    Running,
+    Warm,
+    Failed
 }
 
 public sealed record ModelRecord(
@@ -48,7 +58,32 @@ public sealed record ActiveRuntimeSession(
     string LogPath,
     DateTimeOffset StartedAt,
     string ProcessMarker = "",
-    int ProcessId = 0);
+    int ProcessId = 0,
+    string SessionId = "",
+    bool IsSelected = true);
+
+public sealed record LoadedModelSessionSnapshot(
+    string SessionId,
+    string ModelId,
+    string ModelName,
+    string RuntimeId,
+    string RuntimeName,
+    RuntimeMode Mode,
+    RuntimeBackend Backend,
+    AppSettings LaunchSettings,
+    string LogPath,
+    DateTimeOffset StartedAt,
+    string ProcessMarker,
+    int ProcessId,
+    LoadedModelSessionStatus Status,
+    bool IsRunning,
+    bool IsSelected,
+    long ModelSizeBytes = 0)
+{
+    public string Endpoint => RuntimeEndpointService.LocalOpenAiBaseUrl(LaunchSettings);
+    public string EndpointDisplay => RuntimeEndpointService.EndpointDisplay(LaunchSettings);
+    public string ModelSize => DisplayFormatService.Bytes(ModelSizeBytes);
+}
 
 public sealed record TokenUsageRecord(
     string ModelId,

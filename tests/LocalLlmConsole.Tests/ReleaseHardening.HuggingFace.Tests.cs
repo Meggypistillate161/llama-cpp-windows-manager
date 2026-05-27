@@ -1,4 +1,4 @@
-﻿using LocalLlmConsole.Models;
+using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -215,6 +215,26 @@ public sealed partial class ReleaseHardeningTests
     }
 
 
+    [Fact]
+    public void CompletedDownloadsRegisterAndRefreshBeforeOptionalEnrichmentFinishes()
+    {
+        var serviceSource = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "HuggingFaceService.Safety.cs"));
+        var downloadHistorySource = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.DownloadHistory.cs"));
+        var registerIndex = serviceSource.IndexOf("await RegisterDownloadedHuggingFaceModelAsync(settings, file, destination, timestamp, recovered, new VisionProjectorDownloadResult(\"\", \"\"));", StringComparison.Ordinal);
+        var completedIndex = serviceSource.IndexOf("await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes), JsonOptions), cancellationToken);", StringComparison.Ordinal);
+        var projectorIndex = serviceSource.IndexOf("var projector = await TryDownloadVisionProjectorAsync(settings, file, destination, cancellationToken);", StringComparison.Ordinal);
+
+        Assert.Contains("CompleteVerifiedPrimaryModelAsync", serviceSource, StringComparison.Ordinal);
+        Assert.True(registerIndex >= 0);
+        Assert.True(completedIndex > registerIndex);
+        Assert.True(projectorIndex > completedIndex);
+        Assert.Contains("Optional post-download setup skipped", serviceSource, StringComparison.Ordinal);
+        Assert.Contains("while (_huggingFace?.IsDownloadActive(jobId) == true && !await DownloadJobReachedTerminalStatusAsync(jobId))", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("var refresh = await Dispatcher.InvokeAsync(RefreshCompletedDownloadAsync);", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("await _catalog.ScanAsync(_settings.ModelsRoot);", downloadHistorySource, StringComparison.Ordinal);
+    }
+
+
     [Theory]
     [InlineData("owner/repo", "owner/repo", "", "")]
     [InlineData("owner/repo/folder/model-q4.gguf", "owner/repo", "folder/model-q4.gguf", "")]
@@ -353,6 +373,136 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("Q4_K_M", metadata["ggufQuantization"]?.ToString());
         Assert.Equal("32768", metadata["ggufContextLength"]?.ToString());
         Assert.Equal("true", metadata["ggufHasChatTemplate"]?.ToString().ToLowerInvariant());
+    }
+
+
+    [Fact]
+    public async Task DownloadRegistrationCollapsesExternalDuplicateForSameModelPath()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Model-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        var external = new ModelRecord(
+            "external-model",
+            "External Model",
+            modelPath,
+            OwnershipKind.External,
+            "{}",
+            DateTimeOffset.UtcNow);
+        var settings = ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with { Port = 8099 });
+        await store.UpsertModelAsync(external);
+        await store.SaveModelLaunchSettingsAsync(external.Id, settings);
+
+        var appOwned = await catalog.RegisterDownloadedAsync(modelsRoot, "Model-Q4_K_M.gguf", modelPath, """{"source":"download"}""");
+        var models = await store.ListModelsAsync();
+
+        Assert.Equal("Model Q4 K M", appOwned.Name);
+        Assert.Single(models);
+        Assert.Equal(appOwned.Id, models[0].Id);
+        Assert.Equal("Model Q4 K M", models[0].Name);
+        Assert.Equal(OwnershipKind.AppOwned, models[0].Ownership);
+        Assert.Equal(Path.GetFullPath(modelPath), Path.GetFullPath(models[0].ModelPath));
+        Assert.Null(await store.GetModelLaunchSettingsAsync(external.Id));
+        Assert.Equal(8099, (await store.GetModelLaunchSettingsAsync(appOwned.Id))?.Port);
+    }
+
+
+    [Fact]
+    public async Task ModelCatalogScanCollapsesExistingAppOwnedDuplicateForSameModelPath()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Model-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        var appOwned = new ModelRecord(
+            "app-owned-model",
+            "App Model",
+            modelPath,
+            OwnershipKind.AppOwned,
+            "{}",
+            DateTimeOffset.UtcNow);
+        var external = new ModelRecord(
+            "external-model",
+            "External Model",
+            modelPath,
+            OwnershipKind.External,
+            "{}",
+            DateTimeOffset.UtcNow);
+        var settings = ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with { Port = 8098 });
+        await store.UpsertModelAsync(external);
+        await store.SaveModelLaunchSettingsAsync(external.Id, settings);
+        await store.UpsertModelAsync(appOwned);
+
+        await catalog.ScanAsync(modelsRoot);
+        var models = await store.ListModelsAsync();
+
+        Assert.Single(models);
+        Assert.Equal(appOwned.Id, models[0].Id);
+        Assert.Equal(OwnershipKind.AppOwned, models[0].Ownership);
+        Assert.Null(await store.GetModelLaunchSettingsAsync(external.Id));
+        Assert.Equal(8098, (await store.GetModelLaunchSettingsAsync(appOwned.Id))?.Port);
+    }
+
+
+    [Fact]
+    public async Task ModelCatalogCleanupCollapsesDuplicateRecordsWithoutFilesystemScan()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Model-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        var appOwned = new ModelRecord("app-owned-model", "App Model", modelPath, OwnershipKind.AppOwned, "{}", DateTimeOffset.UtcNow);
+        var external = new ModelRecord("external-model", "External Model", modelPath, OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        await store.UpsertModelAsync(external);
+        await store.UpsertModelAsync(appOwned);
+
+        var removed = await catalog.CleanupDuplicateModelRecordsAsync();
+        var models = await store.ListModelsAsync();
+
+        Assert.Equal(1, removed);
+        Assert.Single(models);
+        Assert.Equal(appOwned.Id, models[0].Id);
+    }
+
+
+    [Fact]
+    public async Task ModelCatalogCleanupRemovesGgufExtensionFromDisplayNames()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Qwen3.5-9B-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        await store.UpsertModelAsync(new ModelRecord(
+            "app-owned-model",
+            "Qwen3.5-9B-Q4_K_M.gguf",
+            modelPath,
+            OwnershipKind.AppOwned,
+            "{}",
+            DateTimeOffset.UtcNow));
+
+        var changed = await catalog.CleanupModelRecordsAsync();
+        var model = Assert.Single(await store.ListModelsAsync());
+
+        Assert.Equal(1, changed);
+        Assert.Equal("Qwen3.5 9B Q4 K M", model.Name);
+        Assert.DoesNotContain(".gguf", model.Name, StringComparison.OrdinalIgnoreCase);
     }
 
 

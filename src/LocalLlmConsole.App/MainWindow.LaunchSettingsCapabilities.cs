@@ -49,7 +49,7 @@ public partial class MainWindow
             section.Visibility = _showAdvancedLaunchSettings ? Visibility.Visible : Visibility.Collapsed;
 
         var backend = SelectedLaunchRuntimeBackend();
-        var gpuRuntime = backend is RuntimeBackend.Cuda or RuntimeBackend.Vulkan or RuntimeBackend.Metal;
+        var gpuRuntime = backend is RuntimeBackend.Cuda or RuntimeBackend.Vulkan or RuntimeBackend.Metal or RuntimeBackend.Sycl;
         SetLaunchSettingVisible("GPU layers", gpuRuntime);
         SetLaunchSettingVisible("Vision", _selectedModelCapabilities.LikelyVision);
         SetLaunchSettingVisible("Image min", _selectedModelCapabilities.LikelyVision);

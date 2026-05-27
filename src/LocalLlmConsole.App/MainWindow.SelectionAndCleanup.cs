@@ -19,6 +19,13 @@ public partial class MainWindow
 
     private static ModelRecord? ModelFromRow(ModelGridRow row) => row.Model;
 
+    private async Task<ModelRecord?> FindModelByIdAsync(string modelId)
+    {
+        if (_stateStore is null || string.IsNullOrWhiteSpace(modelId)) return null;
+        var models = await _stateStore.ListModelsAsync();
+        return models.FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static RuntimeRecord? RuntimeFromRow(RuntimeCatalogRow row) => row.Runtime;
 
     private static RuntimeSourceEntry? RuntimeSourceFromRow(RuntimeCatalogRow row) => row.Source;
@@ -47,8 +54,14 @@ public partial class MainWindow
         return row.Preset;
     }
 
+    private RuntimePackagePreset? RuntimePackagePresetFromRowButton(object sender)
+    {
+        if ((sender as FrameworkElement)?.Tag is not RuntimePackagePresetRow row) return null;
+        return row.Preset;
+    }
+
     private bool IsRuntimeActivelyUsed(RuntimeRecord runtime)
-        => _llama.IsRunning && string.Equals(_llama.ActiveRuntimeId, runtime.Id, StringComparison.OrdinalIgnoreCase);
+        => _sessions.Snapshots().Any(session => session.IsRunning && string.Equals(session.RuntimeId, runtime.Id, StringComparison.OrdinalIgnoreCase));
 
     private bool CanDeleteRuntimeFiles(RuntimeRecord runtime, out string folder, out string reason)
         => RuntimeFileService.CanDeleteRuntimeFiles(runtime, _settings.RuntimeRoot, out folder, out reason);

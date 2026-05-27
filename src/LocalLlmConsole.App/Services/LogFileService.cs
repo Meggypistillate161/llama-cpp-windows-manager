@@ -34,8 +34,10 @@ public static class LogFileService
 
     public static string JobType(JobRecord job)
     {
+        if (job.Kind.Contains("runtime-package", StringComparison.OrdinalIgnoreCase)) return "Runtime download";
         if (job.Kind.Contains("runtime-build", StringComparison.OrdinalIgnoreCase)) return "Runtime build";
         if (job.Kind.Contains("runtime-update", StringComparison.OrdinalIgnoreCase)) return "Runtime update";
+        if (job.Kind.Contains("runtime", StringComparison.OrdinalIgnoreCase) && job.Kind.Contains("download", StringComparison.OrdinalIgnoreCase)) return "Runtime download";
         if (job.Kind.Contains("download", StringComparison.OrdinalIgnoreCase)) return "Model download";
         return "App job";
     }
@@ -197,8 +199,14 @@ public static class LogFileService
     }
 
     public static LogDeletionPlan BuildDeletionPlan(string workspaceRoot, IEnumerable<string> candidates, string activeRuntimeLogPath)
+        => BuildDeletionPlan(workspaceRoot, candidates, string.IsNullOrWhiteSpace(activeRuntimeLogPath) ? [] : [activeRuntimeLogPath]);
+
+    public static LogDeletionPlan BuildDeletionPlan(string workspaceRoot, IEnumerable<string> candidates, IEnumerable<string> activeRuntimeLogPaths)
     {
-        var activePath = NormalizePath(activeRuntimeLogPath);
+        var activePaths = activeRuntimeLogPaths
+            .Select(NormalizePath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var deletable = new List<string>();
         var skipped = 0;
@@ -206,7 +214,7 @@ public static class LogFileService
         foreach (var candidate in candidates)
         {
             if (!TryValidateWorkspaceLogFile(workspaceRoot, candidate, out var fullPath, out _)
-                || (!string.IsNullOrWhiteSpace(activePath) && string.Equals(fullPath, activePath, StringComparison.OrdinalIgnoreCase)))
+                || activePaths.Contains(fullPath))
             {
                 skipped++;
                 continue;

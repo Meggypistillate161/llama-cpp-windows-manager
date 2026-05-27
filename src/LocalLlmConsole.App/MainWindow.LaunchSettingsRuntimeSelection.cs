@@ -28,6 +28,14 @@ public partial class MainWindow
         var selectedRuntimeId = preferredRuntimeId ?? SelectedLaunchRuntimeId();
         runtimes ??= await _stateStore.ListRuntimesAsync();
         _viewModel.LaunchSettings.ReplaceRuntimeChoices(runtimes);
+        if (!string.IsNullOrWhiteSpace(selectedRuntimeId)
+            && !_viewModel.LaunchSettings.RuntimeChoices.Any(choice => string.Equals(choice.Id, selectedRuntimeId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _viewModel.LaunchSettings.RuntimeChoices.Insert(0, new RuntimeChoice(
+                selectedRuntimeId,
+                $"Missing runtime ({selectedRuntimeId})",
+                RuntimeBackend.Cpu));
+        }
         SetRuntimeSelection(selectedRuntimeId);
         UpdateLaunchControlVisibility();
     }
@@ -41,8 +49,14 @@ public partial class MainWindow
             return;
         }
 
-        var match = _viewModel.LaunchSettings.RuntimeChoices.FirstOrDefault(choice => string.Equals(choice.Id, runtimeId, StringComparison.OrdinalIgnoreCase))
-            ?? _viewModel.LaunchSettings.RuntimeChoices.First();
+        var match = _viewModel.LaunchSettings.RuntimeChoices.FirstOrDefault(choice => string.Equals(choice.Id, runtimeId, StringComparison.OrdinalIgnoreCase));
+        if (match is null && !string.IsNullOrWhiteSpace(runtimeId))
+        {
+            _runtimeCombo.SelectedIndex = -1;
+            return;
+        }
+
+        match ??= _viewModel.LaunchSettings.RuntimeChoices.First();
         _runtimeCombo.SelectedValue = match.Id;
     }
 
@@ -56,14 +70,36 @@ public partial class MainWindow
     private RuntimeRecord? ResolveLaunchRuntime(IReadOnlyList<RuntimeRecord> runtimes)
     {
         var selectedRuntimeId = SelectedLaunchRuntimeId();
-        return runtimes.FirstOrDefault(runtime => string.Equals(runtime.Id, selectedRuntimeId, StringComparison.OrdinalIgnoreCase))
-            ?? SelectedRuntime()
-            ?? runtimes.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(selectedRuntimeId))
+            return runtimes.FirstOrDefault(runtime => string.Equals(runtime.Id, selectedRuntimeId, StringComparison.OrdinalIgnoreCase));
+
+        return SelectedRuntime() ?? runtimes.FirstOrDefault();
     }
 
     private static RuntimeRecord? ResolveLaunchRuntime(IReadOnlyList<RuntimeRecord> runtimes, string? runtimeId)
-        => runtimes.FirstOrDefault(runtime => string.Equals(runtime.Id, runtimeId, StringComparison.OrdinalIgnoreCase))
-            ?? runtimes.FirstOrDefault();
+    {
+        if (!string.IsNullOrWhiteSpace(runtimeId))
+            return runtimes.FirstOrDefault(runtime => string.Equals(runtime.Id, runtimeId, StringComparison.OrdinalIgnoreCase));
+
+        return runtimes.FirstOrDefault();
+    }
+
+    private void SetMissingLaunchRuntimeStatus(IReadOnlyList<RuntimeRecord> runtimes, string? runtimeId)
+    {
+        if (runtimes.Count == 0)
+        {
+            SetStatus("Register a llama.cpp runtime first.");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(runtimeId))
+        {
+            SetStatus($"Saved runtime '{runtimeId}' is missing. Choose another runtime and save the model profile.");
+            return;
+        }
+
+        SetStatus("Choose a llama.cpp runtime before loading the model.");
+    }
 
     private void UpdateModelActionButtons()
     {
@@ -73,17 +109,12 @@ public partial class MainWindow
         var selectedModelActive = IsModelActive(model);
         if (_loadModelButton is not null) _loadModelButton.IsEnabled = hasSelection && !selectedModelActive;
         if (_restartModelButton is not null) _restartModelButton.IsEnabled = selectedModelLoaded;
-        if (_unloadModelButton is not null) _unloadModelButton.IsEnabled = selectedModelActive;
+        if (_unloadModelButton is not null) _unloadModelButton.IsEnabled = selectedModelLoaded;
     }
 
     private bool IsModelLoaded(ModelRecord? model)
-        => model is not null
-            && _llama.IsRunning
-            && _llama.State == LlamaRuntimeState.Loaded
-            && string.Equals(_llama.ActiveModelId, model.Id, StringComparison.OrdinalIgnoreCase);
+        => model is not null && _sessions.SessionForModel(model.Id) is { IsRunning: true };
 
     private bool IsModelActive(ModelRecord? model)
-        => model is not null
-            && _llama.IsRunning
-            && string.Equals(_llama.ActiveModelId, model.Id, StringComparison.OrdinalIgnoreCase);
+        => model is not null && _sessions.IsModelActive(model.Id);
 }

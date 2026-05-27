@@ -84,7 +84,7 @@ public sealed class TrackedProcessRunner
         }
         finally
         {
-            try { process.StandardInput.Close(); } catch {}
+            try { process.StandardInput.Close(); } catch { }
         }
     }
 

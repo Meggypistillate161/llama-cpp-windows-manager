@@ -15,7 +15,9 @@ public sealed record RuntimeBuildJobPayload(
     string InstallDir,
     string Message,
     string ProcessMarker,
-    string WslDistro);
+    string WslDistro,
+    RuntimeMode Mode,
+    string SourceDir);
 
 public static class RuntimeBuildJobService
 {
@@ -38,7 +40,7 @@ public static class RuntimeBuildJobService
             source is null ? "Queued." : $"Queued build from downloaded source {RuntimeMetadataService.ShortCommit(source.Commit)}.");
     }
 
-    public static string Payload(RuntimeBuildPreset preset, string action, string installDir, string message, string processMarker = "", string wslDistro = "") => JsonSerializer.Serialize(new
+    public static string Payload(RuntimeBuildPreset preset, string action, string installDir, string message, string processMarker = "", string wslDistro = "", string sourceDir = "") => JsonSerializer.Serialize(new
     {
         preset = preset.Id,
         label = preset.Label,
@@ -46,9 +48,11 @@ public static class RuntimeBuildJobService
         branch = preset.Branch,
         cuda = preset.Cuda,
         backend = RuntimeBuildCatalogService.BackendKey(preset),
+        mode = RuntimeBuildCatalogService.ModeKey(preset.Mode),
         installDir,
         wslDistro,
         processMarker,
+        sourceDir,
         action,
         message
     });
@@ -67,14 +71,17 @@ public static class RuntimeBuildJobService
                 node["repoUrl"]?.ToString() ?? "",
                 node["branch"]?.ToString() ?? "",
                 BoolValue(node["cuda"]),
-                Backend: node["backend"]?.ToString() ?? "");
+                Backend: node["backend"]?.ToString() ?? "",
+                Mode: ParseMode(node["mode"]?.ToString() ?? ""));
             return new RuntimeBuildJobPayload(
                 preset,
                 node["action"]?.ToString() ?? "",
                 node["installDir"]?.ToString() ?? "",
                 node["message"]?.ToString() ?? "",
                 node["processMarker"]?.ToString() ?? "",
-                node["wslDistro"]?.ToString() ?? "");
+                node["wslDistro"]?.ToString() ?? "",
+                preset.Mode,
+                node["sourceDir"]?.ToString() ?? "");
         }
         catch
         {
@@ -113,6 +120,16 @@ public static class RuntimeBuildJobService
         return bool.TryParse(node.ToString(), out var parsed) && parsed;
     }
 
+    private static RuntimeMode ParseMode(string value)
+    {
+        var normalized = (value ?? "").Trim();
+        return normalized.Equals("native", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("windows", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals(nameof(RuntimeMode.Native), StringComparison.OrdinalIgnoreCase)
+                ? RuntimeMode.Native
+                : RuntimeMode.Wsl;
+    }
+
     public static async Task AppendJobLogAsync(string logPath, JobStatus status, string message, long maxLogBytes)
         => await BoundedLogFile.AppendAsync(logPath, $"[{DateTimeOffset.Now:O}] {status}: {message}{Environment.NewLine}", maxLogBytes);
 
@@ -127,6 +144,7 @@ public static class RuntimeBuildJobService
             : new JsonObject();
         metadata["managedPresetId"] = preset.Id;
         metadata["managedPresetLabel"] = preset.Label;
+        metadata["managedMode"] = RuntimeBuildCatalogService.ModeKey(preset.Mode);
         metadata["managedAction"] = update ? "update" : "build";
         metadata["managedInstalledAt"] = DateTimeOffset.UtcNow.ToString("O");
         await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));

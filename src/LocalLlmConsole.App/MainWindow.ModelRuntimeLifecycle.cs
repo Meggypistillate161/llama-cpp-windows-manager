@@ -16,14 +16,18 @@ public partial class MainWindow
 {
     private async Task StartModelRuntimeAsync(RuntimeRecord runtime, ModelRecord model, AppSettings launchSettings)
     {
-        StartModelLoadingTimer(model.Name, launchSettings);
         try
         {
             launchSettings = await EnsureModelApiKeyAsync(launchSettings);
+            var sessionId = LoadedModelSessionManager.SessionIdFor(model.Id);
+            if (_sessions.ReservedPorts(sessionId).Contains(launchSettings.Port))
+                throw new InvalidOperationException($"Port {launchSettings.Port} is already assigned to another loaded model. Set a unique model port next to the runtime before launching.");
             await EnsureRuntimeLaunchPrerequisitesAsync(runtime, launchSettings);
-            await _llama.StartAsync(runtime, model, launchSettings, Path.Combine(_workspaceRoot, "logs"));
-            _activeRuntimeSettings = launchSettings;
-            await SaveActiveRuntimeSessionAsync(runtime, model, launchSettings);
+            if (!await ConfirmVramAdmissionAsync(runtime, model, launchSettings)) return;
+            StartModelLoadingTimer(model.Id, model.Name, launchSettings);
+            var snapshot = await _sessions.StartAsync(runtime, model, launchSettings, Path.Combine(_workspaceRoot, "logs"));
+            _activeRuntimeSettings = snapshot.LaunchSettings;
+            await SaveActiveRuntimeSessionsAsync();
             StartRuntimeReadinessMonitor(model, launchSettings);
             StartRuntimeDashboardRefreshTimer();
             UpdateModelLoadingStatus();
@@ -37,7 +41,7 @@ public partial class MainWindow
             if (_llama.State == LlamaRuntimeState.Failed)
             {
                 StopModelLoadingTimer();
-                ClearActiveRuntimeSession();
+                await SaveActiveRuntimeSessionsAsync();
                 SetStatus($"Failed to load {model.Name}. Check the runtime log.");
             }
             else
@@ -52,9 +56,10 @@ public partial class MainWindow
         }
     }
 
-    private void StartModelLoadingTimer(string modelName, AppSettings launchSettings)
+    private void StartModelLoadingTimer(string modelId, string modelName, AppSettings launchSettings)
     {
         StopModelLoadingTimer();
+        _modelLoadingModelId = modelId;
         _modelLoadingModelName = modelName;
         _modelLoadingEndpoint = RuntimeEndpointService.EndpointDisplay(launchSettings);
         _modelLoadingStartedAt = DateTimeOffset.Now;
@@ -70,6 +75,10 @@ public partial class MainWindow
     private void UpdateModelLoadingStatus()
     {
         if (string.IsNullOrWhiteSpace(_modelLoadingModelName)) return;
+        var selectedOverviewModel = SelectedOverviewModel();
+        if (selectedOverviewModel is not null
+            && !string.Equals(selectedOverviewModel.Id, _modelLoadingModelId, StringComparison.OrdinalIgnoreCase))
+            return;
         var elapsed = DisplayFormatService.Elapsed(DateTimeOffset.Now - _modelLoadingStartedAt);
         SetMetricText(_runtimeDashboardModel, $"Loading {_modelLoadingModelName} ({elapsed})");
         UpdateRuntimeModelProgress();
@@ -78,13 +87,19 @@ public partial class MainWindow
 
     private void RefreshModelStatusMetric(string fallbackModelStatus)
     {
-        if (_modelLoadingTimer is not null)
+        var selectedOverviewModel = SelectedOverviewModel();
+        var loadingSelectedModel = _modelLoadingTimer is not null
+            && (selectedOverviewModel is null || string.Equals(selectedOverviewModel.Id, _modelLoadingModelId, StringComparison.OrdinalIgnoreCase));
+        if (loadingSelectedModel)
         {
             UpdateModelLoadingStatus();
             return;
         }
 
-        if (_modelLoadedStatusTimer is not null && !string.IsNullOrWhiteSpace(_modelLoadedStatusText))
+        var loadedStatusSelectedModel = _modelLoadedStatusTimer is not null
+            && !string.IsNullOrWhiteSpace(_modelLoadedStatusText)
+            && (selectedOverviewModel is null || string.Equals(selectedOverviewModel.Id, _modelLoadedStatusModelId, StringComparison.OrdinalIgnoreCase));
+        if (loadedStatusSelectedModel)
         {
             SetMetricText(_runtimeDashboardModel, _modelLoadedStatusText);
             return;
@@ -98,21 +113,28 @@ public partial class MainWindow
         StopModelLoadedStatusTimer();
         var hadLoadingStatus = _modelLoadingTimer is not null || !string.IsNullOrWhiteSpace(_modelLoadingModelName);
         var elapsed = hadLoadingStatus ? DateTimeOffset.Now - _modelLoadingStartedAt : TimeSpan.Zero;
+        var modelId = _modelLoadingModelId;
         var modelName = string.IsNullOrWhiteSpace(loadedModelName) ? _modelLoadingModelName : loadedModelName;
         _modelLoadingTimer?.Stop();
         _modelLoadingTimer = null;
+        _modelLoadingModelId = "";
         _modelLoadingModelName = "";
         _modelLoadingEndpoint = "";
 
         if (showLoadedDuration && hadLoadingStatus && !string.IsNullOrWhiteSpace(modelName))
-            ShowModelLoadedStatus(modelName, elapsed);
+            ShowModelLoadedStatus(modelId, modelName, elapsed);
     }
 
-    private void ShowModelLoadedStatus(string modelName, TimeSpan elapsed)
+    private void ShowModelLoadedStatus(string modelId, string modelName, TimeSpan elapsed)
     {
+        _modelLoadedStatusModelId = modelId;
         _modelLoadedStatusText = $"Loaded: {modelName} in {DisplayFormatService.Elapsed(elapsed)}";
-        SetMetricText(_runtimeDashboardModel, _modelLoadedStatusText);
-        UpdateRuntimeModelProgress();
+        var selectedOverviewModel = SelectedOverviewModel();
+        if (selectedOverviewModel is null || string.Equals(selectedOverviewModel.Id, modelId, StringComparison.OrdinalIgnoreCase))
+        {
+            SetMetricText(_runtimeDashboardModel, _modelLoadedStatusText);
+            UpdateRuntimeModelProgress();
+        }
 
         _modelLoadedStatusTimer = new System.Windows.Threading.DispatcherTimer
         {
@@ -131,43 +153,53 @@ public partial class MainWindow
         if (_modelLoadedStatusTimer is null) return;
         _modelLoadedStatusTimer.Stop();
         _modelLoadedStatusTimer = null;
+        _modelLoadedStatusModelId = "";
         _modelLoadedStatusText = "";
     }
 
     private void StartRuntimeReadinessMonitor(ModelRecord model, AppSettings launchSettings)
     {
-        StopRuntimeReadinessMonitor();
-        _runtimeReadinessCts = new CancellationTokenSource();
-        RunBackground(() => MonitorRuntimeReadinessAsync(model.Id, model.Name, launchSettings, _runtimeReadinessCts.Token), "Runtime readiness monitor failed");
+        StopRuntimeReadinessMonitor(model.Id);
+        var cts = new CancellationTokenSource();
+        _runtimeReadinessMonitors[model.Id] = cts;
+        RunBackground(() => MonitorRuntimeReadinessAsync(model.Id, model.Name, launchSettings, cts), "Runtime readiness monitor failed");
     }
 
     private void StopRuntimeReadinessMonitor()
     {
-        if (_runtimeReadinessCts is null) return;
-        try { _runtimeReadinessCts.Cancel(); } catch {}
-        _runtimeReadinessCts.Dispose();
-        _runtimeReadinessCts = null;
+        foreach (var modelId in _runtimeReadinessMonitors.Keys.ToArray())
+            StopRuntimeReadinessMonitor(modelId);
     }
 
-    private async Task MonitorRuntimeReadinessAsync(string modelId, string modelName, AppSettings launchSettings, CancellationToken cancellationToken)
+    private void StopRuntimeReadinessMonitor(string modelId)
     {
+        if (!_runtimeReadinessMonitors.Remove(modelId, out var cts)) return;
+        try { cts.Cancel(); } catch { }
+        cts.Dispose();
+    }
+
+    private async Task MonitorRuntimeReadinessAsync(string modelId, string modelName, AppSettings launchSettings, CancellationTokenSource readinessCts)
+    {
+        var cancellationToken = readinessCts.Token;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-                if (!_llama.IsRunning
-                    || _llama.State != LlamaRuntimeState.Loading
-                    || !string.Equals(_llama.ActiveModelId, modelId, StringComparison.OrdinalIgnoreCase))
+                var session = _sessions.SessionForModel(modelId);
+                if (session is not { IsRunning: true, Status: LoadedModelSessionStatus.Loading })
                 {
-                    StopModelLoadingTimer();
+                    if (string.Equals(_modelLoadingModelId, modelId, StringComparison.OrdinalIgnoreCase))
+                        StopModelLoadingTimer();
                     return;
                 }
 
                 if (!await RuntimeEndpointAliveAsync(launchSettings)) continue;
-                if (!_llama.MarkLoadedIfRunning()) return;
+                if (!_sessions.MarkModelLoadedIfRunning(modelId)) return;
 
-                StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: modelName);
+                if (string.Equals(_modelLoadingModelId, modelId, StringComparison.OrdinalIgnoreCase))
+                    StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: modelName);
+                await SaveActiveRuntimeSessionsAsync();
                 SetStatus($"Loaded {modelName} at {RuntimeEndpointService.EndpointDisplay(launchSettings)}.");
                 UpdateRuntimeModelProgress();
                 UpdateModelActionButtons();
@@ -179,22 +211,78 @@ public partial class MainWindow
         catch (OperationCanceledException)
         {
         }
+        finally
+        {
+            if (_runtimeReadinessMonitors.TryGetValue(modelId, out var cts)
+                && ReferenceEquals(cts, readinessCts))
+                _runtimeReadinessMonitors.Remove(modelId);
+            readinessCts.Dispose();
+        }
     }
 
     private async Task StopLoadedRuntimeAsync()
     {
-        StopRuntimeReadinessMonitor();
-        StopModelLoadingTimer();
-        ResetLifetimeCounters();
-        ResetIdleCounters();
-        _llama.Stop();
-        _activeRuntimeSettings = null;
-        ClearActiveRuntimeSession();
+        var selectedSession = _sessions.SelectedSnapshot();
+        var selectedModelId = selectedSession?.ModelId ?? "";
+        var selectedModel = await FindModelByIdAsync(selectedModelId);
+        if (!string.IsNullOrWhiteSpace(selectedModelId))
+            StopRuntimeReadinessMonitor(selectedModelId);
+        if (string.IsNullOrWhiteSpace(selectedModelId)
+            || string.Equals(_modelLoadingModelId, selectedModelId, StringComparison.OrdinalIgnoreCase))
+            StopModelLoadingTimer();
+        ResetLifetimeCounters(selectedSession);
+        ResetIdleCounters(selectedSession);
+        await _sessions.StopSelectedAsync();
+        _activeRuntimeSettings = _sessions.ActiveSettings;
+        await SaveActiveRuntimeSessionsAsync();
         ResetMetricCounters();
         await RefreshOverviewAsync();
         await RefreshRuntimeMetricsAsync();
         UpdateModelActionButtons();
         UpdateOverviewModelActions();
         SetStatus("Runtime stopped.");
+    }
+
+    private async Task StopModelRuntimeAsync(ModelRecord model)
+    {
+        var wasSelected = IsModelActive(model);
+        var stoppedSession = _sessions.SessionForModel(model.Id);
+        StopRuntimeReadinessMonitor(model.Id);
+        if (string.Equals(_modelLoadingModelId, model.Id, StringComparison.OrdinalIgnoreCase))
+            StopModelLoadingTimer();
+        if (wasSelected)
+        {
+            ResetMetricCounters();
+        }
+        ResetLifetimeCounters(stoppedSession);
+        ResetIdleCounters(stoppedSession);
+
+        await _sessions.StopModelAsync(model.Id);
+        _activeRuntimeSettings = _sessions.ActiveSettings;
+        await SaveActiveRuntimeSessionsAsync();
+        await RefreshOverviewAsync();
+        await RefreshRuntimeMetricsAsync();
+        UpdateModelActionButtons();
+        UpdateOverviewModelActions();
+        SetStatus($"Unloaded {model.Name}.");
+    }
+
+    private async Task SwitchToLoadedModelAsync(ModelRecord model)
+    {
+        if (!_sessions.SelectModel(model.Id))
+        {
+            SetStatus($"{model.Name} is not loaded.");
+            return;
+        }
+
+        _activeRuntimeSettings = _sessions.ActiveSettings;
+        ResetMetricCounters();
+        await SaveActiveRuntimeSessionsAsync();
+        StartRuntimeDashboardRefreshTimer();
+        await RefreshOverviewModelSelectorAsync();
+        await RefreshRuntimeMetricsAsync();
+        UpdateModelActionButtons();
+        UpdateOverviewModelActions();
+        SetStatus($"Selected loaded model {model.Name}.");
     }
 }

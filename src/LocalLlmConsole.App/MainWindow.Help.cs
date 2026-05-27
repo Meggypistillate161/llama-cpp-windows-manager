@@ -14,70 +14,42 @@ namespace LocalLlmConsole;
 
 public partial class MainWindow
 {
-    private const string HelpFocusWsl = "wsl";
-    private const string HelpFocusUbuntu = "ubuntu";
-    private const string HelpFocusTools = "tools";
-
     private void ShowHelp()
     {
         SetPage("Help", "First-run setup steps.");
 
         var panel = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
         panel.Children.Add(Text("First Steps", 22, true));
-        panel.Children.Add(Text("Work through these in order. The buttons jump to the page where the action lives; setup and install actions still run from their own workflow page.", 13, muted: true));
+        panel.Children.Add(Text("Start with an official prebuilt runtime. Build tools and source builds are advanced options for custom forks, patches, or release targets that do not have an official package.", 13, muted: true));
 
         panel.Children.Add(HelpStep(
             "Step 1",
-            "Install WSL",
-            "Open WSL Linux and install Windows Subsystem for Linux. If WSL is already installed, use the update action when needed.",
-            ("Open WSL Linux", (_, _) => NavigateFromHelp("wsl"))));
-
-        panel.Children.Add(HelpStep(
-            "Step 2",
-            "Install Ubuntu",
-            "Open WSL Linux and install the recommended Ubuntu distro. Ubuntu is the supported path for guided llama.cpp source builds.",
-            ("Open WSL Linux", (_, _) => NavigateFromHelp("ubuntu"))));
-
-        panel.Children.Add(HelpStep(
-            "Step 3",
-            "Install build tools for your system",
-            "Open WSL Linux and install the tools required to build llama.cpp: use Install CPU Tools for CPU builds, Install CUDA for NVIDIA, or Install Vulkan for AMD/Vulkan builds.",
-            ("Open WSL Linux", (_, _) => NavigateFromHelp("tools"))));
-
-        panel.Children.Add(HelpStep(
-            "Step 4",
-            "Download llama.cpp source",
-            "Open Runtimes and download the llama.cpp repository that matches the toolkit you plan to use. Prefer the official CPU, CUDA, or Vulkan preset for your hardware.",
+            "Install an official runtime",
+            "Open Runtimes and install the official prebuilt llama.cpp runtime for your target: Windows or WSL, then CUDA, CPU, Vulkan, or Intel Arc SYCL.",
             ("Open Runtimes", (_, _) => NavigateFromHelp("runtime-download"))));
 
         panel.Children.Add(HelpStep(
-            "Step 5",
-            "Build the runtime",
-            "Open Runtimes and click Build for the downloaded llama.cpp source. The completed build is what the app uses to launch models.",
-            ("Open Runtimes", (_, _) => NavigateFromHelp("runtime-build"))));
-
-        panel.Children.Add(HelpStep(
-            "Step 6",
+            "Step 2",
             "Download a model",
             "Open Models, search Hugging Face, select the model file you want, and click Download on the row.",
             ("Open Models", (_, _) => NavigateFromHelp("model-download"))));
 
         panel.Children.Add(HelpStep(
-            "Step 7",
+            "Step 3",
             "Save model launch settings",
-            "Downloaded models are registered automatically. Use Scan Models Folder only if you copied a model manually or the downloaded model does not appear. Select the model, adjust the launch settings on the right, then click Save For Model.",
+            "Downloaded models are registered automatically. Use Scan Models Folder only if you copied a model manually or the downloaded model does not appear. Select the runtime, keep or change the model port, adjust launch settings, then click Save For Model.",
             ("Open Models", (_, _) => NavigateFromHelp("launch-settings"))));
 
         panel.Children.Add(HelpStep(
-            "Step 8",
+            "Step 4",
             "Load the model",
-            "Open Overview, choose the model from the dropdown at the top, then click Load.",
+            "Open Overview, choose the model from the dropdown at the top, then click Load. Loaded model sessions stay available on their saved per-model ports, so more than one model can serve at the same time when the hardware has room.",
             ("Open Overview", (_, _) => NavigateFromHelp("overview-load"))));
 
         panel.Children.Add(HelpStep(
-            "Step 9",
+            "Step 5",
             "Add the model to OpenCode",
-            "Open OpenCode, choose Add New in the OpenCode Models dropdown, select the local model in the second dropdown, then click Add.",
+            "Open OpenCode, choose Add New in the OpenCode Models dropdown, select the local model in the second dropdown, then click Add. Each saved model keeps its own endpoint.",
             ("Open OpenCode", (_, _) => NavigateFromHelp("opencode"))));
 
         PageHost.Content = Scroll(panel, new Thickness(16));
@@ -135,25 +107,9 @@ public partial class MainWindow
         _helpFocusTarget = target;
         switch (target)
         {
-            case HelpFocusWsl:
-                ShowWslLinux();
-                SetStatus("Help: use the highlighted WSL action.");
-                break;
-            case HelpFocusUbuntu:
-                ShowWslLinux();
-                SetStatus("Help: use the highlighted Ubuntu action.");
-                break;
-            case HelpFocusTools:
-                ShowWslLinux();
-                SetStatus("Help: choose the highlighted CPU, CUDA, or Vulkan tool action for your hardware.");
-                break;
             case "runtime-download":
                 ShowRuntimes();
-                SetStatus("Help: in Runtime Repositories, choose the official CPU, CUDA, or Vulkan preset and click Download.");
-                break;
-            case "runtime-build":
-                ShowRuntimes();
-                SetStatus("Help: in Installed Local Builds, click Build on a downloaded llama.cpp source row.");
+                SetStatus("Help: in Runtime Downloads, choose the official Windows or WSL package for CUDA, CPU, Vulkan, or Intel Arc SYCL, then click Install.");
                 break;
             case "model-download":
                 ShowModels();
@@ -180,23 +136,14 @@ public partial class MainWindow
 
     private void ApplyPendingHelpFocus()
     {
+        if (_viewModel.CurrentPage == "Windows")
+        {
+            ClearWindowsHelpHighlights();
+            return;
+        }
+
         if (_viewModel.CurrentPage != "WSL Linux") return;
         ClearWslHelpHighlights();
-
-        switch (_helpFocusTarget)
-        {
-            case HelpFocusWsl:
-                HighlightFirstVisibleHelpButton(_wslInstallButton, _wslCheckUpdatesButton);
-                break;
-            case HelpFocusUbuntu:
-                HighlightFirstVisibleHelpButton(_wslInstallUbuntuButton, _wslCheckUbuntuUpdatesButton);
-                break;
-            case HelpFocusTools:
-                HighlightHelpButton(_wslInstallBuildToolsButton, focus: true);
-                HighlightHelpButton(_wslInstallCudaToolkitButton, focus: false);
-                HighlightHelpButton(_wslInstallVulkanToolsButton, focus: false);
-                break;
-        }
     }
 
     private void ClearWslHelpHighlights()
@@ -204,7 +151,20 @@ public partial class MainWindow
         foreach (var button in new[]
         {
             _wslInstallButton, _wslCheckUpdatesButton, _wslInstallUbuntuButton, _wslCheckUbuntuUpdatesButton,
-            _wslInstallBuildToolsButton, _wslInstallCudaToolkitButton, _wslInstallVulkanToolsButton
+            _wslInstallBuildToolsButton, _wslInstallCudaToolkitButton, _wslInstallVulkanToolsButton,
+            _wslInstallSyclRuntimeButton, _wslInstallSyclOneApiButton
+        })
+        {
+            if (button is not null) button.Tag = null;
+        }
+    }
+
+    private void ClearWindowsHelpHighlights()
+    {
+        foreach (var button in new[]
+        {
+            _windowsInstallCpuToolsButton, _windowsInstallCudaToolkitButton, _windowsInstallVulkanToolsButton,
+            _windowsInstallSyclToolsButton
         })
         {
             if (button is not null) button.Tag = null;

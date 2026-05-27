@@ -15,7 +15,7 @@ namespace LocalLlmConsole;
 public partial class MainWindow
 {
     private const string AppDisplayName = "llama.cpp Console";
-    private const string AppVersionLabel = "v1.0";
+    private const string AppVersionLabel = "v1.1";
 
     private sealed record RuntimeUpdateCheck(bool IsInstalled, bool HasUpdate, string LocalCommit, string RemoteCommit);
     private sealed record RuntimeMetricDisplaySnapshot(
@@ -25,6 +25,12 @@ public partial class MainWindow
         string TotalTokens,
         string Settings,
         DateTimeOffset CapturedAt);
+    private sealed record RuntimeMetricPollResult(
+        LoadedModelSessionSnapshot Session,
+        string RuntimeKey,
+        IReadOnlyList<PrometheusSample> Samples,
+        RuntimeSlotSnapshot? SlotSnapshot,
+        string Error);
 
     private readonly string _workspaceRoot;
     private StateStore? _stateStore;
@@ -35,21 +41,29 @@ public partial class MainWindow
     private HuggingFaceService? _huggingFace;
     private OpenCodeConfigService? _openCode;
     private readonly AppUpdateService _appUpdates = new();
+    private readonly WindowsEnvironmentService _windowsEnvironment = new();
     private readonly WslEnvironmentService _wslEnvironment = new();
     private readonly ActiveRuntimeSessionStore _activeSessions;
+    private readonly RuntimePortAllocator _portAllocator = new();
+    private readonly VramAdmissionService _vramAdmission = new();
     private readonly TrackedProcessRunner _processRunner = new();
-    private readonly LlamaProcessSupervisor _llama = new();
+    private readonly LoadedModelSessionManager _sessions = new();
+    private readonly RuntimeLifetimeCounterTracker _lifetimeTokenCounters = new();
+    private readonly RuntimeIdleUnloadTracker _idleUnloadTracker = new();
     private readonly MainWindowViewModel _viewModel = new();
     private AppSettings _settings;
     private AppSettings? _activeRuntimeSettings;
+    private LlamaProcessSupervisor _llama => _sessions.ActiveSupervisor;
     private OpenCodeFileSet _openCodeFiles = new("", "");
 
     private readonly HashSet<string> _autoScannedRuntimeRoots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RuntimePackageUpdateState> _runtimePackageUpdateStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RuntimeUpdateState> _runtimeUpdateStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CancellationTokenSource> _runtimeBuildCancellations = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _wslBuildMarkerGate = new();
     private readonly HashSet<string> _activeWslBuildMarkers = new(StringComparer.OrdinalIgnoreCase);
     private WpfComboBox? _runtimeCombo;
+    private WpfTextBox? _launchPortBox;
     private TextBlock? _modelCapabilityText;
     private WpfTextBox? _contextSizeBox;
     private WpfTextBox? _gpuLayersBox;
@@ -105,9 +119,13 @@ public partial class MainWindow
     private WpfButton? _unloadModelButton;
     private WpfButton? _saveModelLaunchSettingsButton;
     private DataGrid? _modelsGrid;
+    private DataGrid? _loadedSessionsGrid;
     private DataGrid? _runtimeGrid;
+    private DataGrid? _runtimePackageGrid;
     private DataGrid? _runtimeBuildGrid;
     private DataGrid? _runtimeJobsGrid;
+    private WpfButton? _runtimeAdvancedToggleButton;
+    private DataGrid? _windowsToolsGrid;
     private DataGrid? _wslDistroGrid;
     private DataGrid? _runtimeMetricsGrid;
     private DataGrid? _lifetimeMetricsGrid;
@@ -151,10 +169,23 @@ public partial class MainWindow
     private Grid? _runtimeDashboardRequests;
     private Grid? _runtimeDashboardGpu;
     private Grid? _wslStatusMetric;
+    private Grid? _windowsStatusMetric;
+    private Grid? _windowsCpuMetric;
+    private Grid? _windowsCudaMetric;
+    private Grid? _windowsVulkanMetric;
+    private Grid? _windowsSyclMetric;
     private Grid? _wslSelectedMetric;
     private Grid? _wslInfoMetric;
     private Grid? _wslToolsMetric;
     private bool _wslLinuxAutoRefreshDone;
+    private bool _windowsAutoRefreshDone;
+    private WindowsToolSnapshot? _cachedWindowsTools;
+    private WslEnvironmentReport? _cachedWslReport;
+    private WslToolSnapshot? _cachedWslTools;
+    private WpfButton? _windowsInstallCpuToolsButton;
+    private WpfButton? _windowsInstallCudaToolkitButton;
+    private WpfButton? _windowsInstallVulkanToolsButton;
+    private WpfButton? _windowsInstallSyclToolsButton;
     private WpfButton? _wslInstallButton;
     private WpfButton? _wslCheckUpdatesButton;
     private WpfButton? _wslDeleteButton;
@@ -162,21 +193,27 @@ public partial class MainWindow
     private WpfButton? _wslInstallBuildToolsButton;
     private WpfButton? _wslInstallCudaToolkitButton;
     private WpfButton? _wslInstallVulkanToolsButton;
+    private WpfButton? _wslInstallSyclRuntimeButton;
+    private WpfButton? _wslInstallSyclOneApiButton;
     private WpfButton? _wslCheckUbuntuUpdatesButton;
     private WpfButton? _wslDeleteUbuntuButton;
     private WpfButton? _wslDeleteBuildToolsButton;
     private WpfButton? _wslDeleteCudaToolkitButton;
     private WpfButton? _wslDeleteVulkanToolsButton;
+    private WpfButton? _wslDeleteSyclRuntimeButton;
+    private WpfButton? _wslDeleteSyclOneApiButton;
     private WpfProgressBar? _runtimeDashboardModelProgress;
     private TextBlock? _modelsFolderText;
     private TextBlock? _runtimesFolderText;
     private readonly HttpClient _metricsClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private readonly HttpClient _runtimePackageClient = new() { Timeout = TimeSpan.FromMinutes(60) };
     private readonly Dictionary<string, List<FrameworkElement>> _launchSettingElements = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FrameworkElement> _advancedLaunchSections = new();
     private readonly Dictionary<string, ModelCapabilitySummary> _modelCapabilityCache = new(StringComparer.OrdinalIgnoreCase);
     private ModelCapabilitySummary _selectedModelCapabilities = ModelCapabilityService.Empty();
     private WpfCheckBox? _advancedLaunchSettingsToggle;
     private bool _showAdvancedLaunchSettings;
+    private bool _showAdvancedRuntimes;
     private string _launchSettingsModelId = "";
     private ModelLaunchSettings? _savedLaunchSettingsSnapshot;
     private bool _hasSavedLaunchSettingsSnapshot;
@@ -190,13 +227,6 @@ public partial class MainWindow
     private double? _lastSlotGeneratedCounter;
     private DateTimeOffset? _lastSlotPollAt;
     private RuntimeMetricDisplaySnapshot? _lastRuntimeMetricDisplay;
-    private string _lastLifetimeRuntimeKey = "";
-    private double? _lastLifetimePromptCounter;
-    private double? _lastLifetimeGeneratedCounter;
-    private string _lastIdleRuntimeKey = "";
-    private double? _lastIdlePromptCounter;
-    private double? _lastIdleGeneratedCounter;
-    private DateTimeOffset? _lastRuntimeActivityAt;
     private bool _autoUnloadInProgress;
     private string _cachedGpuSummary = "Unavailable";
     private DateTimeOffset _cachedGpuSummaryAt = DateTimeOffset.MinValue;
@@ -204,8 +234,10 @@ public partial class MainWindow
     private System.Windows.Threading.DispatcherTimer? _modelLoadingTimer;
     private System.Windows.Threading.DispatcherTimer? _modelLoadedStatusTimer;
     private DateTimeOffset _modelLoadingStartedAt;
+    private string _modelLoadingModelId = "";
     private string _modelLoadingModelName = "";
     private string _modelLoadingEndpoint = "";
+    private string _modelLoadedStatusModelId = "";
     private string _modelLoadedStatusText = "";
     private bool _shutdownRequested;
     private bool _shutdownCleanupComplete;
@@ -213,7 +245,7 @@ public partial class MainWindow
     private WindowState _windowStateBeforeTray = WindowState.Normal;
     private bool _minimizingToTray;
     private bool _shownTrayHint;
-    private CancellationTokenSource? _runtimeReadinessCts;
+    private readonly Dictionary<string, CancellationTokenSource> _runtimeReadinessMonitors = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _launchSettingsRefreshCts;
     private string _helpFocusTarget = "";
 }

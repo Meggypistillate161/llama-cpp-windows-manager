@@ -21,10 +21,10 @@ public sealed partial class LlamaProcessSupervisor : IDisposable
             });
             if (stop is not null && !stop.WaitForExit(3000))
             {
-                try { stop.Kill(entireProcessTree: true); } catch {}
+                try { stop.Kill(entireProcessTree: true); } catch { }
             }
         }
-        catch {}
+        catch { }
     }
 
     private static string WslKillByExecutableAndPortCommand(string executablePath, int port)

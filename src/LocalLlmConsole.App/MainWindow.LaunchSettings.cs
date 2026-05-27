@@ -62,17 +62,19 @@ public partial class MainWindow
         }
 
         var selectedId = model.Id;
-        var profile = _stateStore is null ? null : await _stateStore.GetModelLaunchSettingsAsync(selectedId);
+        var profile = _stateStore is null ? null : await ReadModelLaunchProfileAsync(model);
         cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(SelectedModel()?.Id, selectedId, StringComparison.OrdinalIgnoreCase)) return;
 
         if (profile is null)
         {
+            var draft = await DraftModelLaunchProfileAsync(model);
+            cancellationToken.ThrowIfCancellationRequested();
             _savedLaunchSettingsSnapshot = null;
             _hasSavedLaunchSettingsSnapshot = false;
-            await RefreshRuntimeSelectorAsync(preferredRuntimeId: "");
+            await RefreshRuntimeSelectorAsync(draft.RuntimeId);
             cancellationToken.ThrowIfCancellationRequested();
-            ApplyLaunchSettingsToControls(_settings);
+            ApplyLaunchSettingsToControls(draft.ApplyTo(_settings));
             await ApplyModelCapabilitiesAsync(model, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             _launchSettingsModelId = selectedId;
@@ -109,10 +111,11 @@ public partial class MainWindow
     {
         await RunAsync("Saving launch defaults...", async () =>
         {
-            _settings = ReadLaunchSettingsFromControls();
+            var launchDefaults = ReadLaunchSettingsFromControls();
+            _settings = launchDefaults with { Port = _settings.Port };
             await PersistSettingsAsync();
             UpdateLaunchSaveButtonState();
-            SetStatus("Launch defaults saved. Runtime choices stay per-model.");
+            SetStatus("Launch defaults saved. Model ports stay per-model.");
         });
     }
 
@@ -139,6 +142,7 @@ public partial class MainWindow
     {
         var next = _settings with
         {
+            Port = ReadInt(_launchPortBox, "Port", min: 1, max: 65535),
             ContextSize = ReadContextSize(_contextSizeBox),
             GpuLayers = ReadInt(_gpuLayersBox, "GPU layers", min: 0),
             ParallelSlots = ReadInt(_parallelSlotsBox, "Parallel slots", min: 1),
@@ -200,6 +204,7 @@ public partial class MainWindow
     {
         _updatingLaunchSettingsControls = true;
         var settings = source ?? _settings;
+        SetText(_launchPortBox, settings.Port);
         SetText(_contextSizeBox, settings.ContextSize);
         SetText(_gpuLayersBox, settings.GpuLayers);
         SetText(_parallelSlotsBox, settings.ParallelSlots);
@@ -267,7 +272,7 @@ public partial class MainWindow
 
         foreach (var box in new[]
         {
-            _contextSizeBox, _gpuLayersBox, _parallelSlotsBox, _batchSizeBox, _microBatchSizeBox,
+            _launchPortBox, _contextSizeBox, _gpuLayersBox, _parallelSlotsBox, _batchSizeBox, _microBatchSizeBox,
             _threadsBox, _reasoningBudgetBox, _visionImageMinTokensBox, _visionImageMaxTokensBox,
             _temperatureBox, _topKBox, _topPBox, _minPBox,
             _maxTokensBox, _seedBox, _repeatLastNBox, _repeatPenaltyBox, _presencePenaltyBox,

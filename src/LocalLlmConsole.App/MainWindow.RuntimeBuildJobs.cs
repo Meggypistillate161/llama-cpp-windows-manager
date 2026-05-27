@@ -17,8 +17,8 @@ public partial class MainWindow
     private async Task BuildRuntimeSourceAsync(RuntimeSourceEntry source)
     {
         var preset = RuntimeBuildPresetRows().FirstOrDefault(candidate => string.Equals(candidate.Id, source.PresetId, StringComparison.OrdinalIgnoreCase))
-            ?? new RuntimeBuildPreset(source.PresetId, source.Label, source.RepoUrl, source.Branch, source.Cuda, Backend: source.Backend);
-        await BuildManagedWslRuntimeAsync(preset, update: false, source);
+            ?? new RuntimeBuildPreset(source.PresetId, source.Label, source.RepoUrl, source.Branch, source.Cuda, Backend: source.Backend, Mode: source.Mode);
+        await BuildManagedRuntimeAsync(preset, update: false, source);
     }
 
     private async Task DeleteRuntimeSourceAsync(RuntimeSourceEntry source)
@@ -67,7 +67,11 @@ public partial class MainWindow
             return;
         }
 
-        if (runtimes.Any(runtime => _llama.IsRunning && string.Equals(_llama.ActiveRuntimeId, runtime.Id, StringComparison.OrdinalIgnoreCase)))
+        var activeRuntimeIds = _sessions.Snapshots()
+            .Where(session => session.IsRunning)
+            .Select(session => session.RuntimeId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (runtimes.Any(runtime => activeRuntimeIds.Contains(runtime.Id)))
         {
             SetStatus("Unload the running model before deleting the runtime it is using.");
             return;
@@ -108,21 +112,32 @@ public partial class MainWindow
         await SaveCustomRuntimeBuildPresetsAsync(customPresets);
     }
 
-    private async Task BuildManagedWslRuntimeAsync(RuntimeBuildPreset preset, bool update, RuntimeSourceEntry? source = null)
+    private async Task BuildManagedRuntimeAsync(RuntimeBuildPreset preset, bool update, RuntimeSourceEntry? source = null)
     {
         var script = await EnsureBuildToolScriptAsync();
         if (_jobs is null || _runtimes is null) return;
-        await EnsureWslDistroReadyAsync(_settings.WslDistro);
         var backend = RuntimeBuildCatalogService.BuildBackend(preset);
-        if (backend == RuntimeBackend.Cuda)
-            await EnsureWslCudaToolkitReadyAsync(_settings.WslDistro);
-        if (backend == RuntimeBackend.Vulkan)
-            await EnsureWslVulkanToolsReadyAsync(_settings.WslDistro);
+        var mode = RuntimeBuildCatalogService.BuildMode(preset);
+        if (mode == RuntimeMode.Wsl)
+        {
+            await EnsureWslDistroReadyAsync(_settings.WslDistro);
+            if (backend == RuntimeBackend.Cuda)
+                await EnsureWslCudaToolkitReadyAsync(_settings.WslDistro);
+            if (backend == RuntimeBackend.Vulkan)
+                await EnsureWslVulkanToolsReadyAsync(_settings.WslDistro);
+            if (backend == RuntimeBackend.Sycl)
+                await EnsureWslSyclToolsReadyAsync(_settings.WslDistro);
+        }
+        else
+        {
+            EnsureWindowsBuildToolsReady(backend);
+        }
 
         Directory.CreateDirectory(_settings.RuntimeRoot);
         Directory.CreateDirectory(_settings.CacheRoot);
         var plan = RuntimeBuildJobService.CreatePlan(preset, update, source, _settings, DateTimeOffset.UtcNow);
-        var job = await _jobs.CreateAsync("runtime-build", RuntimeBuildJobService.Payload(preset, plan.Action, plan.InstallDir, plan.QueuedMessage, plan.ProcessMarker, _settings.WslDistro));
+        var payloadSourceDir = source?.SourceDir ?? "";
+        var job = await _jobs.CreateAsync("runtime-build", RuntimeBuildJobService.Payload(preset, plan.Action, plan.InstallDir, plan.QueuedMessage, plan.ProcessMarker, _settings.WslDistro, payloadSourceDir));
         var buildCancellation = RegisterRuntimeBuildCancellation(job.Id);
         await RefreshJobsAsync();
 
@@ -131,7 +146,7 @@ public partial class MainWindow
             try
             {
                 buildCancellation.Token.ThrowIfCancellationRequested();
-                await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, plan.Action, plan.InstallDir, update ? "Checking remote repository..." : "Building downloaded source...", plan.ProcessMarker);
+                await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, plan.Action, plan.InstallDir, update ? "Checking remote repository..." : "Building downloaded source...", plan.ProcessMarker, payloadSourceDir);
                 if (update)
                 {
                     var check = await CheckRuntimeUpdateAsync(preset);
@@ -139,7 +154,7 @@ public partial class MainWindow
                     if (check.IsInstalled && !check.HasUpdate)
                     {
                         var message = $"Already up to date at {check.LocalCommit}. No new build was created.";
-                        await UpdateRuntimeJobAsync(job, JobStatus.Completed, preset, "update", plan.InstallDir, message);
+                        await UpdateRuntimeJobAsync(job, JobStatus.Completed, preset, "update", plan.InstallDir, message, plan.ProcessMarker, payloadSourceDir);
                         await RefreshOverviewAsync();
                         ThemedMessageBox.Show(this, message, "Runtime update", MessageBoxButton.OK, MessageBoxImage.Information);
                         return;
@@ -147,11 +162,11 @@ public partial class MainWindow
 
                     if (check.IsInstalled && check.HasUpdate)
                     {
-                        await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, "update", plan.InstallDir, $"Update found: {RuntimeMetadataService.ShortCommit(check.LocalCommit)} -> {RuntimeMetadataService.ShortCommit(check.RemoteCommit)}. Building new runtime...", plan.ProcessMarker);
+                        await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, "update", plan.InstallDir, $"Update found: {RuntimeMetadataService.ShortCommit(check.LocalCommit)} -> {RuntimeMetadataService.ShortCommit(check.RemoteCommit)}. Building new runtime...", plan.ProcessMarker, payloadSourceDir);
                     }
                     else
                     {
-                        await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, "update", plan.InstallDir, "No installed build was detected. Building a fresh runtime...", plan.ProcessMarker);
+                        await UpdateRuntimeJobAsync(job, JobStatus.Running, preset, "update", plan.InstallDir, "No installed build was detected. Building a fresh runtime...", plan.ProcessMarker, payloadSourceDir);
                     }
                 }
 
@@ -161,7 +176,7 @@ public partial class MainWindow
                 var cleanupMessage = source is null
                     ? ""
                     : await TryDeleteRuntimeSourceAfterSuccessfulBuildAsync(source, job.LogPath);
-                await UpdateRuntimeJobAsync(job, JobStatus.Completed, preset, plan.Action, plan.InstallDir, $"{preset.Label} installed as {Path.GetFileName(plan.InstallDir)}.{cleanupMessage}");
+                await UpdateRuntimeJobAsync(job, JobStatus.Completed, preset, plan.Action, plan.InstallDir, $"{preset.Label} installed as {Path.GetFileName(plan.InstallDir)}.{cleanupMessage}", plan.ProcessMarker, payloadSourceDir);
                 await RefreshRuntimesAsync();
                 await RefreshOverviewAsync();
                 SetStatus($"{preset.Label} installed as {Path.GetFileName(plan.InstallDir)}.{cleanupMessage}");
@@ -170,12 +185,12 @@ public partial class MainWindow
             {
                 if (buildCancellation.IsCancellationRequested)
                 {
-                    await UpdateRuntimeJobAsync(job, JobStatus.Cancelled, preset, plan.Action, plan.InstallDir, "Cancelled by user.", plan.ProcessMarker);
+                    await UpdateRuntimeJobAsync(job, JobStatus.Cancelled, preset, plan.Action, plan.InstallDir, "Cancelled by user.", plan.ProcessMarker, payloadSourceDir);
                     SetStatus($"Cancelled {preset.Label} build.");
                     return;
                 }
 
-                await UpdateRuntimeJobAsync(job, JobStatus.Failed, preset, plan.Action, plan.InstallDir, ex.Message);
+                await UpdateRuntimeJobAsync(job, JobStatus.Failed, preset, plan.Action, plan.InstallDir, ex.Message, plan.ProcessMarker, payloadSourceDir);
                 throw;
             }
             finally
@@ -185,11 +200,11 @@ public partial class MainWindow
         });
     }
 
-    private async Task UpdateRuntimeJobAsync(JobRecord job, JobStatus status, RuntimeBuildPreset preset, string action, string installDir, string message, string processMarker = "")
+    private async Task UpdateRuntimeJobAsync(JobRecord job, JobStatus status, RuntimeBuildPreset preset, string action, string installDir, string message, string processMarker = "", string sourceDir = "")
     {
         if (_jobs is null) return;
         await RuntimeBuildJobService.AppendJobLogAsync(job.LogPath, status, message, MaxLogBytes());
-        await _jobs.UpdateAsync(job, status, RuntimeBuildJobService.Payload(preset, action, installDir, message, processMarker, _settings.WslDistro));
+        await _jobs.UpdateAsync(job, status, RuntimeBuildJobService.Payload(preset, action, installDir, message, processMarker, _settings.WslDistro, sourceDir));
         await RefreshJobsAsync();
     }
 

@@ -5,8 +5,10 @@ public sealed class MainWindowViewModel
     public OverviewPageViewModel Overview { get; } = new();
     public ModelsPageViewModel Models { get; } = new();
     public RuntimesPageViewModel Runtimes { get; } = new();
+    public RuntimePackagesPageViewModel RuntimePackages { get; } = new();
     public RuntimeBuildsPageViewModel RuntimeBuilds { get; } = new();
     public LifetimeMetricsViewModel LifetimeMetrics { get; } = new();
+    public WindowsPageViewModel Windows { get; } = new();
     public WslLinuxPageViewModel WslLinux { get; } = new();
     public HuggingFacePageViewModel HuggingFace { get; } = new();
     public JobsViewModel Jobs { get; } = new();

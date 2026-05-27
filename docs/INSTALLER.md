@@ -25,7 +25,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 The setup executable is written to:
 
 ```text
-dist\installer\LlamaCppConsole-Setup-1.0.0-win-x64.exe
+dist\installer\LlamaCppConsole-Setup-1.1.0-win-x64.exe
 ```
 
 ## Install Behavior

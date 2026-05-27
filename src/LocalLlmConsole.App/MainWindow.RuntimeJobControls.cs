@@ -80,11 +80,11 @@ public partial class MainWindow
         }
 
         TryCancelRuntimeBuild(job.Id);
-        if (!string.IsNullOrWhiteSpace(payload.ProcessMarker))
+        if (payload.Mode == RuntimeMode.Wsl && !string.IsNullOrWhiteSpace(payload.ProcessMarker))
             await CleanupWslBuildMarkerAsync(string.IsNullOrWhiteSpace(payload.WslDistro) ? _settings.WslDistro : payload.WslDistro, payload.ProcessMarker);
 
         await RuntimeBuildJobService.AppendJobLogAsync(job.LogPath, JobStatus.Cancelled, "Cancel requested by user.", MaxLogBytes());
-        await _jobs.UpdateAsync(job, JobStatus.Cancelled, RuntimeBuildJobService.Payload(payload.Preset, payload.Action, payload.InstallDir, "Cancel requested by user.", payload.ProcessMarker, payload.WslDistro));
+        await _jobs.UpdateAsync(job, JobStatus.Cancelled, RuntimeBuildJobService.Payload(payload.Preset, payload.Action, payload.InstallDir, "Cancel requested by user.", payload.ProcessMarker, payload.WslDistro, payload.SourceDir));
         await RefreshJobsAsync();
         SetStatus($"Cancel requested for {payload.Preset.Label}.");
     }
@@ -98,7 +98,31 @@ public partial class MainWindow
             return;
         }
 
-        await BuildManagedWslRuntimeAsync(payload.Preset, payload.Action.Equals("update", StringComparison.OrdinalIgnoreCase));
+        await BuildManagedRuntimeAsync(
+            payload.Preset,
+            payload.Action.Equals("update", StringComparison.OrdinalIgnoreCase),
+            RuntimeSourceFromBuildPayload(payload));
+    }
+
+    private static RuntimeSourceEntry? RuntimeSourceFromBuildPayload(RuntimeBuildJobPayload payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload.SourceDir) || !Directory.Exists(payload.SourceDir))
+            return null;
+
+        var commit = RuntimeMetadataService.TryReadGitHeadCommit(payload.SourceDir);
+        if (string.IsNullOrWhiteSpace(commit))
+            commit = RuntimeMetadataService.InferCommitFromText(payload.SourceDir);
+        return new RuntimeSourceEntry(
+            payload.Preset.Id,
+            payload.Preset.Label,
+            payload.Preset.RepoUrl,
+            payload.Preset.Branch,
+            payload.Preset.Cuda,
+            payload.SourceDir,
+            commit,
+            DateTimeOffset.UtcNow,
+            RuntimeBuildCatalogService.BackendKey(payload.Preset),
+            payload.Mode);
     }
 
     private async Task ClearRuntimeBuildJobAsync(JobRecord job)

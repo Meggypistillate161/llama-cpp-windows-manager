@@ -136,7 +136,23 @@ public sealed partial class OpenCodeConfigService
     }
 
     private static string LocalModelId(ModelRecord model)
-        => SafeOpenCodeId(Path.GetFileNameWithoutExtension(model.ModelPath));
+    {
+        var stem = SafeOpenCodeId(Path.GetFileNameWithoutExtension(model.ModelPath));
+        var suffix = ShortOpenCodeModelIdentity(model);
+        return string.IsNullOrWhiteSpace(suffix) ? stem : $"{stem}-{suffix}";
+    }
+
+    private static string LocalProviderIdFor(ModelRecord model)
+        => $"{LocalProviderPrefix}{LocalModelId(model)}";
+
+    private static string LocalProviderNameFor(ModelRecord model)
+        => string.IsNullOrWhiteSpace(model.Name)
+            ? LocalProviderName
+            : $"{LocalProviderName}: {model.Name}";
+
+    private static bool IsLocalProviderId(string providerId)
+        => string.Equals(providerId, LocalProviderId, StringComparison.OrdinalIgnoreCase)
+            || providerId.StartsWith(LocalProviderPrefix, StringComparison.OrdinalIgnoreCase);
 
     private static string UniqueModelId(JsonObject models, string modelId)
     {
@@ -170,4 +186,24 @@ public sealed partial class OpenCodeConfigService
 
     private static string NormalizeSimilarityText(string value)
         => Regex.Replace((value ?? "").ToLowerInvariant(), @"[^a-z0-9]+", "");
+
+    private static string ShortOpenCodeModelIdentity(ModelRecord model)
+    {
+        var seed = string.Join("|", new[]
+        {
+            model.Id,
+            SafeFullPath(model.ModelPath),
+            model.Name
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (string.IsNullOrWhiteSpace(seed)) return "";
+
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(seed.ToLowerInvariant()));
+        return Convert.ToHexString(bytes)[..8].ToLowerInvariant();
+    }
+
+    private static string SafeFullPath(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch { return path ?? ""; }
+    }
 }
