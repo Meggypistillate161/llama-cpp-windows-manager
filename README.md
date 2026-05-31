@@ -13,6 +13,8 @@ llama.cpp Windows Manager is a Windows desktop control panel for raw
 models, save per-model launch profiles, run models as local OpenAI-compatible
 endpoints, and monitor loaded sessions without living in PowerShell.
 
+![llama.cpp Windows Manager overview](docs/images/overview.png)
+
 Use it when you want the flexibility of `llama-server` on Windows or WSL, but
 with a UI for runtimes, ports, launch settings, logs, metrics, updates, and
 optional OpenCode config sync. It is not a hosted service or a chat-first model
