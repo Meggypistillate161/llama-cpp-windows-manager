@@ -53,7 +53,6 @@ public partial class MainWindow
         if (!renderOverview || selectedOverviewModel is null) return;
 
         SetMetricText(_runtimeDashboardPage.ModelMetric, $"Stopped: {selectedOverviewModel.Name}");
-        SetMetricText(_runtimeDashboardPage.RuntimeMetric, "No loaded runtime");
         SetRuntimeModelProgress(LlamaRuntimeState.Stopped);
         SetMetricText(_runtimeDashboardPage.GpuMetric, await CachedGpuSummaryAsync());
         if (_runtimeDashboardPage.RuntimeLogBox is not null)
@@ -66,6 +65,7 @@ public partial class MainWindow
         => new(
             RefreshRuntimeLogTail,
             ApplyRuntimeMetricRows,
+            ReadMtpTokenStatsFromRuntimeLog,
             ApplyRuntimeMetricSummary);
 
     private RuntimeDashboardRefreshApplicationActions RuntimeDashboardRefreshActions()
@@ -86,7 +86,6 @@ public partial class MainWindow
             settings => _activeRuntimeSettings = settings,
             ActiveRuntimeLabelsAsync,
             RefreshModelStatusMetric,
-            (runtimeName, emphasizeLoadedStatus) => SetMetricText(_runtimeDashboardPage.RuntimeMetric, runtimeName, emphasizeLoadedStatus),
             SaveActiveRuntimeSessionsAsync,
             UpdateRuntimeModelProgress,
             CachedGpuSummaryAsync,

@@ -1,6 +1,6 @@
 # Release Readiness Checklist
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 
 ## Automated Gate
 
@@ -19,8 +19,12 @@ included when the machine has Inno Setup and any required signing certificate:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
+
+Add `-RequireCleanTree` to `test-release-gate.ps1`, `publish-app.ps1`, or
+`build-installer.ps1` when packaging release artifacts; the scripts fail if
+`git status --porcelain --untracked-files=all` reports any tracked or untracked
+worktree changes.
 
 Trusted signed release builds use:
 
@@ -50,6 +54,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 
 - Confirm only one app instance can run in the same user session.
 - Confirm Runtime Downloads can check the upstream official llama.cpp release feed and list the official prebuilt packages for CUDA Windows, CUDA WSL, Vulkan Windows, Vulkan WSL, Intel Arc SYCL Windows, Intel Arc SYCL WSL, CPU Windows, and CPU WSL.
 - Confirm Runtime Downloads can check the Atomic TurboQuant binary feed, install the Windows CUDA package when published, and show the WSL CUDA row as not published until a matching Linux/WSL asset exists.
+- Confirm runtime package downloads fail closed when the downloaded byte count
+  does not match release metadata or when no SHA-256 metadata/companion checksum
+  is available for a required package asset.
 - Confirm installing a prebuilt runtime does not require Git, CMake, Visual Studio Build Tools, WSL build tools, or source checkout.
 - Confirm installed prebuilt runtimes are registered, can be selected per model, and show update/delete state on the Runtime Downloads page.
 - Confirm official prebuilt CUDA downloads include the matching runtime DLL/archive companion when upstream publishes one.
@@ -78,10 +85,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 
 - Confirm the Overview Loaded Model Sessions grid shows an auto-load gateway
   router row with endpoint, policy, LAN exposure, and current direct-session
   count.
+- Confirm Overview token monitors use two compact rows in the form
+  `0.0 t/s (Gen) | 0.0 t/s (Avg) | 0 t (Total)`, with matching Prompt and
+  Accepted rows, live rates falling back to `0.0 t/s` when idle, and average or
+  total segments omitted when those values are unavailable.
+- Confirm the Overview Slots card shows active/queued requests and busy decode
+  slots in two rows, and that GPU metrics render separators as ` | ` with
+  spaces on both sides.
 - Confirm the Settings API key Generate action creates a new model API key.
 - Confirm Settings > OpenCode > Sync on launch save controls whether saved
   launch settings and saved variants automatically rewrite OpenCode local model
   entries.
+- Confirm Settings explains that OpenCode sync copies the model API key into
+  OpenCode provider config in plain text, even though the app protects its own
+  persisted key with current-user Windows data protection.
 - Confirm Settings shows cache size at the top and Clear removes cache contents only when downloads/builds are idle.
 - Confirm local-only model serving launches with an API key and client requests include that key.
 - Confirm the persisted model API key is protected at rest for the current Windows user.
@@ -98,6 +115,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 
 - Confirm corrupt settings are backed up and defaulted.
 - Confirm corrupt SQLite DB files are quarantined and the app recreates state.
 - Confirm interrupted jobs are marked `Interrupted` on restart and can be resumed or removed.
+- Confirm oversized auto-load gateway request bodies are rejected with `413`
+  before proxying to a model runtime.
 - Confirm Hugging Face downloads cannot write outside the configured models folder.
 - Confirm completed downloads are not registered when the final byte count mismatches the expected size or no expected size/SHA-256 metadata exists.
 - Confirm imported external model deletion removes only app registration files.
@@ -137,23 +156,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 
 - Confirm release assets include a matching SHA-256 companion file and that a bad checksum prevents staging.
 - Confirm a signed installed app refuses an unsigned or differently signed staged update.
 - Confirm a completed staged update restarts `LlamaCppWindowsManager.exe` and shows the GitHub release notes.
-- Confirm an older `LlamaCppConsole.exe` portable install can stage the v1.1.2 update without changing the target path unexpectedly.
+- Confirm an older `LlamaCppConsole.exe` portable install can stage a newer update without changing the target path unexpectedly.
 
 ## Latest Local Verification
 
-Current local check on 2026-05-31:
+Current local check on 2026-06-01:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-app.ps1
-D:\LLM\.dotnet-sdk-8\dotnet.exe format LocalLlmConsole.sln --verify-no-changes --verbosity minimal
-git diff --check
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
 
 Result: Release app build succeeded with zero warnings, release-hardening tests
-passed (`422/422`), formatting was clean, no vulnerable packages were found,
+passed (`432/432`), formatting was clean, no vulnerable packages were found,
 the diff had no whitespace errors, and publish/installer artifact checks passed
 locally. The next release notes draft is tracked in
 `docs/GITHUB_RELEASE_NEXT.md`.

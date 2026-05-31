@@ -40,7 +40,9 @@ public sealed partial class ReleaseHardeningTests
             "n_prompt_tokens_processed": 12,
             "n_decoded": 8,
             "n_prompt_tokens": "20",
-            "n_ctx": 4096
+            "n_ctx": 4096,
+            "n_draft_tokens": 9,
+            "n_draft_tokens_accepted": 6
           },
           {
             "next_token": [
@@ -61,6 +63,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal(20, snapshot.PromptTokens);
         Assert.Equal(28, snapshot.ContextTokens);
         Assert.Equal(6144, snapshot.ContextSize);
+        Assert.Equal(9, snapshot.MtpGeneratedTokens);
+        Assert.Equal(6, snapshot.MtpAcceptedTokens);
         Assert.Equal(2, RuntimeDashboardService.DeltaRate(14, 10, 2, includeZero: false));
         Assert.Null(RuntimeDashboardService.DeltaRate(10, 10, 2, includeZero: false));
         Assert.Equal(0, RuntimeDashboardService.DeltaRate(10, 10, 2, includeZero: true));
@@ -74,6 +78,27 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal(2, lifetimeCounter);
         Assert.True(RuntimeDashboardService.PositiveDelta(4, 3));
         Assert.Equal("Gen 13\nPrompt 15", RuntimeDashboardService.TokenSummaryLabel(13, 15));
+        Assert.Equal("2.0 t/s (Gen) | 3.0 t/s (Avg) | 13 t (Total)\nUnknown (Prompt) | 15 t (Total)", RuntimeDashboardService.TokenActivitySummaryLabel(2, 3, null, null, 13, 15));
+        Assert.Equal("5.0 t/s (Gen) | 20 t (Total)\n0.0 t/s (Prompt) | 10 t (Total)", RuntimeDashboardService.TokenActivitySummaryLabel(5, 0, 0, 0, 20, 10));
+        Assert.Equal(
+            "Active 1 | Queued 0\nBusy/decode 1.5",
+            RuntimeDashboardService.RuntimeSlotsLabel(
+            [
+                new PrometheusSample("llamacpp:requests_processing", "", 1, "1", "gauge", ""),
+                new PrometheusSample("llamacpp:requests_deferred", "", 0, "0", "gauge", ""),
+                new PrometheusSample("llamacpp:n_busy_slots_per_decode", "", 1.5, "1.5", "gauge", "")
+            ]));
+        Assert.Equal("2.0 t/s (Gen) | 3.0 t/s (Avg) | 9 t (Total)\n1.5 t/s (Accepted) | 2.5 t/s (Avg) | 6 t (Total)", RuntimeDashboardService.MtpTokenSummaryLabel(2, 3, 1.5, 2.5, 9, 6));
+        var parsedMtpStats = RuntimeDashboardService.ParseMtpTokenStats(
+            "statistics        draft-mtp: #calls(b,g,a) =  566 142602 107915, #gen drafts = 107915, #acc drafts = 103668, #gen tokens = 294686, #acc tokens = 274174, dur(b,g,a) = 0.412, 851457.082, 118.639 ms");
+        Assert.NotNull(parsedMtpStats);
+        Assert.Equal(294686, parsedMtpStats.GeneratedTokens);
+        Assert.Equal(274174, parsedMtpStats.AcceptedTokens);
+        Assert.Equal(851.457082, parsedMtpStats.GeneratedSeconds);
+        Assert.Equal(851.457082, parsedMtpStats.AcceptedSeconds);
+        Assert.Equal(
+            new RuntimeMtpTokenSnapshot(297, 171),
+            RuntimeDashboardService.ParseMtpTokenStats("draft acceptance rate = 0.57576 (  171 accepted /   297 generated)"));
         Assert.Equal("2.0 t/s (3.0 avg)", RuntimeDashboardService.RateLabel(2, 3));
         Assert.Equal("Context 6,144\nKV cache 50%, 28 tokens", RuntimeDashboardService.RuntimeSettingsLabel(.5, 28, 6144, 4096));
     }
@@ -149,33 +174,94 @@ public sealed partial class ReleaseHardeningTests
     public void RuntimeMetricSummaryTrackerTracksLiveRatesAndLastKnownValues()
     {
         var root = CreateTempRoot();
-        var settings = AppSettings.CreateDefault(root);
+        var settings = AppSettings.CreateDefault(root) with { SpeculativeType = "draft-mtp" };
         var tracker = new RuntimeMetricSummaryTracker();
         var capturedAt = DateTimeOffset.Parse("2026-05-26T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
         var firstSamples = new[]
         {
             new PrometheusSample("llama_tokens_predicted_total", "", 10, "10", "counter", ""),
-            new PrometheusSample("llama_prompt_tokens_total", "", 4, "4", "counter", "")
+            new PrometheusSample("llama_tokens_predicted_seconds_total", "", 5, "5", "counter", ""),
+            new PrometheusSample("llama_prompt_tokens_total", "", 4, "4", "counter", ""),
+            new PrometheusSample("llama_prompt_seconds_total", "", 2, "2", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_generated_total", "", 6, "6", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_generated_seconds_total", "", 3, "3", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_accepted_total", "", 4, "4", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_accepted_seconds_total", "", 2, "2", "counter", ""),
+            new PrometheusSample("llama_requests_processing", "", 1, "1", "gauge", ""),
+            new PrometheusSample("llama_requests_deferred", "", 2, "2", "gauge", ""),
+            new PrometheusSample("llama_n_busy_slots_per_decode", "", 1.25, "1.25", "gauge", "")
         };
         var secondSamples = new[]
         {
             new PrometheusSample("llama_tokens_predicted_total", "", 16, "16", "counter", ""),
-            new PrometheusSample("llama_prompt_tokens_total", "", 8, "8", "counter", "")
+            new PrometheusSample("llama_tokens_predicted_seconds_total", "", 8, "8", "counter", ""),
+            new PrometheusSample("llama_prompt_tokens_total", "", 8, "8", "counter", ""),
+            new PrometheusSample("llama_prompt_seconds_total", "", 4, "4", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_generated_total", "", 12, "12", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_generated_seconds_total", "", 4, "4", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_accepted_total", "", 10, "10", "counter", ""),
+            new PrometheusSample("llama_mtp_tokens_accepted_seconds_total", "", 5, "5", "counter", ""),
+            new PrometheusSample("llama_requests_processing", "", 2, "2", "gauge", ""),
+            new PrometheusSample("llama_requests_deferred", "", 0, "0", "gauge", ""),
+            new PrometheusSample("llama_n_busy_slots_per_decode", "", 1.5, "1.5", "gauge", "")
         };
 
-        var first = tracker.Apply("model|runtime|8081", firstSamples, settings, slotSnapshot: null, capturedAt);
-        var second = tracker.Apply("model|runtime|8081", secondSamples, settings, slotSnapshot: null, capturedAt.AddSeconds(2));
-        var stale = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, capturedAt.AddSeconds(5));
+        var first = tracker.Apply("model|runtime|8081", firstSamples, settings, slotSnapshot: null, mtpTokenSnapshot: null, capturedAt);
+        var second = tracker.Apply("model|runtime|8081", secondSamples, settings, slotSnapshot: null, mtpTokenSnapshot: null, capturedAt.AddSeconds(2));
+        var stale = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: null, capturedAt.AddSeconds(5));
 
         Assert.False(first.UsedLastKnown);
         Assert.Equal("Gen 10\nPrompt 4", first.TotalTokens);
+        Assert.Equal("Unknown (Gen) | 2.0 t/s (Avg) | 10 t (Total)\nUnknown (Prompt) | 2.0 t/s (Avg) | 4 t (Total)", first.Tokens);
         Assert.False(second.UsedLastKnown);
-        Assert.Equal("Gen 3.0 t/s\nPrompt 2.0 t/s", second.GenerationRate);
+        Assert.Equal("Gen 3.0 t/s (2.0 avg)\nPrompt 2.0 t/s (2.0 avg)", second.GenerationRate);
         Assert.Equal("Gen 16\nPrompt 8", second.TotalTokens);
+        Assert.Equal("3.0 t/s (Gen) | 2.0 t/s (Avg) | 16 t (Total)\n2.0 t/s (Prompt) | 2.0 t/s (Avg) | 8 t (Total)", second.Tokens);
+        Assert.Equal("3.0 t/s (Gen) | 3.0 t/s (Avg) | 12 t (Total)\n3.0 t/s (Accepted) | 2.0 t/s (Avg) | 10 t (Total)", second.MtpTokens);
+        Assert.Equal("Active 2 | Queued 0\nBusy/decode 1.5", second.Slots);
         Assert.True(stale.UsedLastKnown);
         Assert.Equal(capturedAt.AddSeconds(2), stale.LastKnownCapturedAt);
         Assert.Equal(second.GenerationRate, stale.GenerationRate);
-        Assert.Equal(2, tracker.LastKnownSamples("model|runtime|8081").Count);
+        Assert.Equal(second.MtpTokens, stale.MtpTokens);
+        Assert.Equal(11, tracker.LastKnownSamples("model|runtime|8081").Count);
+    }
+
+    [Fact]
+    public void RuntimeMetricSummaryTrackerShowsConfiguredMtpIdleInsteadOfBlank()
+    {
+        var root = CreateTempRoot();
+        var settings = AppSettings.CreateDefault(root) with { SpeculativeType = "draft-mtp" };
+        var tracker = new RuntimeMetricSummaryTracker();
+        var capturedAt = DateTimeOffset.Parse("2026-05-26T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+
+        var summary = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: null, capturedAt: capturedAt);
+
+        Assert.False(summary.UsedLastKnown);
+        Assert.Equal("0.0 t/s (Gen)\n0.0 t/s (Accepted)", summary.MtpTokens);
+    }
+
+    [Fact]
+    public void RuntimeMetricSummaryTrackerUsesLogMtpDurationsForAverages()
+    {
+        var root = CreateTempRoot();
+        var settings = AppSettings.CreateDefault(root) with { SpeculativeType = "draft-mtp" };
+        var tracker = new RuntimeMetricSummaryTracker();
+        var capturedAt = DateTimeOffset.Parse("2026-05-26T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var firstStats = RuntimeDashboardService.ParseMtpTokenStats(
+            "statistics draft-mtp: #calls(b,g,a) = 1 10 10, #gen drafts = 10, #acc drafts = 8, #gen tokens = 100, #acc tokens = 80, dur(b,g,a) = 0.001, 10000.000, 0.250 ms");
+        var secondStats = RuntimeDashboardService.ParseMtpTokenStats(
+            "statistics draft-mtp: #calls(b,g,a) = 2 20 20, #gen drafts = 20, #acc drafts = 13, #gen tokens = 160, #acc tokens = 130, dur(b,g,a) = 0.001, 20000.000, 0.500 ms");
+
+        var first = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: firstStats, capturedAt: capturedAt);
+        var second = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: secondStats, capturedAt: capturedAt.AddSeconds(2));
+        var idle = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: secondStats, capturedAt: capturedAt.AddSeconds(4));
+        var stale = tracker.Apply("model|runtime|8081", [], settings, slotSnapshot: null, mtpTokenSnapshot: null, capturedAt: capturedAt.AddSeconds(6));
+
+        Assert.Equal("Unknown (Gen) | 10.0 t/s (Avg) | 100 t (Total)\nUnknown (Accepted) | 8.0 t/s (Avg) | 80 t (Total)", first.MtpTokens);
+        Assert.Equal("30.0 t/s (Gen) | 8.0 t/s (Avg) | 160 t (Total)\n25.0 t/s (Accepted) | 6.5 t/s (Avg) | 130 t (Total)", second.MtpTokens);
+        Assert.Equal("0.0 t/s (Gen) | 8.0 t/s (Avg) | 160 t (Total)\n0.0 t/s (Accepted) | 6.5 t/s (Avg) | 130 t (Total)", idle.MtpTokens);
+        Assert.True(stale.UsedLastKnown);
+        Assert.Equal(idle.MtpTokens, stale.MtpTokens);
     }
 
     [Fact]
@@ -194,6 +280,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.False(cache.TryGet(now.AddSeconds(10), out var expired));
         Assert.Equal("Unavailable", expired);
         Assert.Equal("Unavailable", cache.Store("", now));
+        Assert.Equal("GPU 0: 76% | 62C | 12.0/24.0 GiB", cache.Store("GPU 0: 76%|62C|12.0/24.0 GiB", now));
 
         cache.Store("NVIDIA 16 GB free", now);
         cache.Clear();
@@ -744,10 +831,15 @@ public sealed partial class ReleaseHardeningTests
                     rows.Add(plan);
                     calls.Add($"rows:{plan.Samples.Count}:{plan.LeadingRow?.C1 ?? ""}");
                 },
+                () =>
+                {
+                    calls.Add("mtp:none");
+                    return null;
+                },
                 summary =>
                 {
                     summaries.Add(summary);
-                    calls.Add($"summary:{summary.TotalTokens}");
+                    calls.Add($"summary:{summary.Tokens}");
                 });
 
         void Clear()
@@ -857,7 +949,6 @@ public sealed partial class ReleaseHardeningTests
                     return Task.FromResult(("Model label", "Runtime label"));
                 },
                 modelStatus => calls.Add($"model:{modelStatus}"),
-                (runtimeStatus, emphasized) => calls.Add($"runtime:{runtimeStatus}:{emphasized}"),
                 () =>
                 {
                     calls.Add("save");
@@ -878,6 +969,11 @@ public sealed partial class ReleaseHardeningTests
                 new RuntimeDashboardMetricsApplicationActions(
                     _ => calls.Add("metrics-log"),
                     _ => calls.Add("metrics-rows"),
+                    () =>
+                    {
+                        calls.Add("metrics-mtp");
+                        return null;
+                    },
                     _ => calls.Add("metrics-summary")),
                 () => calls.Add("actions")),
             TestContext.Current.CancellationToken);
@@ -895,12 +991,12 @@ public sealed partial class ReleaseHardeningTests
                 "active:8081",
                 "labels",
                 "model:Model label",
-                "runtime:Runtime label:True",
                 "progress",
                 "gpu-read",
                 "gpu:GPU summary",
                 "metrics-log",
                 "metrics-rows",
+                "metrics-mtp",
                 "metrics-summary",
                 "actions"
             ],

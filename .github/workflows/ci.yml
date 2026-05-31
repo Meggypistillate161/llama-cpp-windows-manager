@@ -30,6 +30,14 @@ jobs:
         shell: pwsh
         run: .\test-app.ps1
 
+      - name: Verify formatting
+        shell: pwsh
+        run: dotnet format LocalLlmConsole.sln --verify-no-changes --verbosity minimal
+
+      - name: Check diff whitespace
+        shell: pwsh
+        run: git diff --check
+
       - name: Package vulnerability audit
         shell: pwsh
         run: .\test-vulnerabilities.ps1

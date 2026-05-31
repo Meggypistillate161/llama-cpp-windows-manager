@@ -55,15 +55,26 @@ public sealed class JobEngine
 
     private async Task UpsertValidatedAsync(JobRecord job, JobStatus status, string payloadJson)
     {
-        var current = await _store.GetJobAsync(job.Id) ?? job;
+        var current = await _store.GetJobAsync(job.Id)
+            ?? throw new InvalidOperationException($"Job {job.Id} no longer exists.");
         if (!IsValidStatusTransition(current.Status, status))
             throw new InvalidOperationException($"Invalid job status transition for {job.Id}: {current.Status} -> {status}.");
 
-        await _store.UpsertJobAsync(current with
+        var updated = current with
         {
             Status = status,
             PayloadJson = payloadJson,
             UpdatedAt = DateTimeOffset.UtcNow
-        });
+        };
+        if (await _store.TryUpdateJobAsync(updated, current.Status))
+            return;
+
+        var latest = await _store.GetJobAsync(job.Id)
+            ?? throw new InvalidOperationException($"Job {job.Id} no longer exists.");
+        if (latest.Status == status)
+            return;
+        if (!IsValidStatusTransition(latest.Status, status))
+            throw new InvalidOperationException($"Invalid job status transition for {job.Id}: {latest.Status} -> {status}.");
+        throw new InvalidOperationException($"Job {job.Id} changed while updating from {current.Status} to {status}. Current status is {latest.Status}; retry against the latest job state.");
     }
 }

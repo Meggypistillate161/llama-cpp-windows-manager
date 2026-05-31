@@ -28,12 +28,12 @@ public sealed record OverviewPageControls(
     WpfButton UnloadButton,
     DataGrid LoadedSessionsGrid,
     Grid RuntimeDashboardModel,
-    Grid RuntimeDashboardRuntime,
-    Grid RuntimeDashboardRequests,
-    Grid RuntimeDashboardGenerationRate,
-    TextBlock RuntimeDashboardGenerationRateLastKnown,
-    Grid RuntimeDashboardTotalTokens,
     Grid RuntimeDashboardGpu,
+    Grid RuntimeDashboardRequests,
+    Grid RuntimeDashboardTokens,
+    TextBlock RuntimeDashboardTokensLastKnown,
+    Grid RuntimeDashboardMtpTokens,
+    Grid RuntimeDashboardSlots,
     WpfTextBox RuntimeLogBox,
     DataGrid RuntimeMetricsGrid);
 
@@ -84,12 +84,12 @@ public static class OverviewPageFactory
 
         var runtimeDashboard = RuntimeDashboard(
             out var runtimeDashboardModel,
-            out var runtimeDashboardRuntime,
+            out var runtimeDashboardGpu,
             out var runtimeDashboardRequests,
-            out var runtimeDashboardGenerationRate,
-            out var runtimeDashboardGenerationRateLastKnown,
-            out var runtimeDashboardTotalTokens,
-            out var runtimeDashboardGpu);
+            out var runtimeDashboardTokens,
+            out var runtimeDashboardTokensLastKnown,
+            out var runtimeDashboardMtpTokens,
+            out var runtimeDashboardSlots);
         dashboardSection.Children.Add(runtimeDashboard);
         Grid.SetRow(dashboardSection, 1);
         root.Children.Add(dashboardSection);
@@ -115,12 +115,12 @@ public static class OverviewPageFactory
             unloadButton,
             loadedSessionsGrid,
             runtimeDashboardModel,
-            runtimeDashboardRuntime,
-            runtimeDashboardRequests,
-            runtimeDashboardGenerationRate,
-            runtimeDashboardGenerationRateLastKnown,
-            runtimeDashboardTotalTokens,
             runtimeDashboardGpu,
+            runtimeDashboardRequests,
+            runtimeDashboardTokens,
+            runtimeDashboardTokensLastKnown,
+            runtimeDashboardMtpTokens,
+            runtimeDashboardSlots,
             runtimeLogBox,
             runtimeMetricsGrid);
     }
@@ -166,12 +166,12 @@ public static class OverviewPageFactory
 
     private static Grid RuntimeDashboard(
         out Grid model,
-        out Grid runtime,
+        out Grid gpu,
         out Grid requests,
-        out Grid generationRate,
-        out TextBlock generationRateLastKnown,
-        out Grid totalTokens,
-        out Grid gpu)
+        out Grid tokens,
+        out TextBlock tokensLastKnown,
+        out Grid mtpTokens,
+        out Grid slots)
     {
         var runtimeDashboard = new Grid { Margin = new Thickness(0, 2, 0, 8) };
         runtimeDashboard.ColumnDefinitions.Add(new ColumnDefinition());
@@ -181,11 +181,11 @@ public static class OverviewPageFactory
             runtimeDashboard.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         model = MetricCardFactory.AddMetric(runtimeDashboard, "Model status", 0, 0);
-        runtime = MetricCardFactory.AddMetric(runtimeDashboard, "Runtime build", 0, 1);
+        gpu = MetricCardFactory.AddMetric(runtimeDashboard, "GPU", 0, 1);
         requests = MetricCardFactory.AddMetric(runtimeDashboard, "Settings", 0, 2);
-        generationRate = MetricCardFactory.AddMetric(runtimeDashboard, "Tokens (Live)", 1, 0, out generationRateLastKnown);
-        totalTokens = MetricCardFactory.AddMetric(runtimeDashboard, "Tokens (Total)", 1, 1);
-        gpu = MetricCardFactory.AddMetric(runtimeDashboard, "GPU", 1, 2);
+        tokens = MetricCardFactory.AddMetric(runtimeDashboard, "Tokens", 1, 0, out tokensLastKnown);
+        mtpTokens = MetricCardFactory.AddMetric(runtimeDashboard, "MTP tokens", 1, 1);
+        slots = MetricCardFactory.AddMetric(runtimeDashboard, "Slots", 1, 2);
         return runtimeDashboard;
     }
 

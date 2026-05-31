@@ -72,6 +72,30 @@ ON CONFLICT(id) DO UPDATE SET
         });
     }
 
+    public async Task<bool> TryUpdateJobAsync(JobRecord job, JobStatus expectedStatus)
+    {
+        return await WithConnectionAsync(async () =>
+        {
+            await using var command = _connection.CreateCommand();
+            command.CommandText = """
+UPDATE jobs
+SET status = $status,
+    payload_json = $payload_json,
+    log_path = $log_path,
+    updated_at = $updated_at
+WHERE id = $id
+  AND status = $expected_status;
+""";
+            command.Parameters.AddWithValue("$id", job.Id);
+            command.Parameters.AddWithValue("$status", job.Status.ToString());
+            command.Parameters.AddWithValue("$expected_status", expectedStatus.ToString());
+            command.Parameters.AddWithValue("$payload_json", job.PayloadJson);
+            command.Parameters.AddWithValue("$log_path", job.LogPath);
+            command.Parameters.AddWithValue("$updated_at", job.UpdatedAt.ToString("O"));
+            return await command.ExecuteNonQueryAsync() == 1;
+        });
+    }
+
     public async Task DeleteJobAsync(string id)
     {
         await WithConnectionAsync(async () =>

@@ -6,44 +6,44 @@ Windows-first desktop app for installing, configuring, and running local
 This is an unofficial community project. It is not affiliated with, endorsed by,
 or maintained by the `llama.cpp` or `ggml-org` projects.
 
+## At a Glance
+
+llama.cpp Windows Manager is a Windows desktop control panel for raw
+`llama.cpp`/GGUF workflows. It helps you install runtimes, download or register
+models, save per-model launch profiles, run models as local OpenAI-compatible
+endpoints, and monitor loaded sessions without living in PowerShell.
+
+Use it when you want the flexibility of `llama-server` on Windows or WSL, but
+with a UI for runtimes, ports, launch settings, logs, metrics, updates, and
+optional OpenCode config sync. It is not a hosted service or a chat-first model
+library replacement.
+
 ## What It Does
 
-- Registers local GGUF models and app-managed downloaded models.
-- Searches Hugging Face for GGUF files and downloads them with size or SHA-256
-  verification before registration, including discoverable mmproj/projector
-  companions when available.
-- Downloads prebuilt `llama.cpp` runtimes first, including official packages
-  and selected fork builds such as Atomic TurboQuant CUDA.
-- Runs `llama-server` as either a native Windows runtime or an Ubuntu/WSL
-  runtime.
-- Supports CPU, CUDA, Vulkan, and Intel Arc SYCL runtime choices where upstream
-  publishes matching packages and the local hardware/driver stack supports
-  them.
-- Detects native Windows and Ubuntu/WSL CPU build tools, CUDA Toolkit, Vulkan
-  SDK/tools, and Intel oneAPI/SYCL prerequisites for advanced source builds.
-- Builds CPU, CUDA, Vulkan, or SYCL `llama.cpp` runtimes for native Windows or
-  Ubuntu/WSL when a custom source build is needed.
-- Starts and supervises one or more `llama-server` sessions, exposing
-  OpenAI-compatible `/v1` endpoints for local clients with per-model launch
-  profiles and stable per-model ports.
+- Registers local GGUF models and app-managed Hugging Face downloads, with size
+  or SHA-256 verification and companion mmproj/projector discovery.
+- Installs prebuilt `llama.cpp` runtimes first, including official packages and
+  selected fork builds such as Atomic TurboQuant CUDA.
+- Runs one or more supervised `llama-server` sessions on native Windows or
+  Ubuntu/WSL, with stable per-model ports and OpenAI-compatible `/v1` endpoints.
+- Supports CPU, CUDA, Vulkan, and Intel Arc SYCL runtime choices where packages,
+  hardware, and drivers support them.
+- Keeps advanced source builds available for native Windows or Ubuntu/WSL when a
+  custom fork, branch, patch, or backend build is needed.
 - Provides an optional auto-load gateway: one shared OpenAI-compatible `/v1`
-  endpoint that resolves requested model ids, starts the requested model on its
-  saved direct port, and proxies the request.
-- Lets the gateway either keep existing loaded models running or switch to a
-  single active model by unloading other sessions before loading the request.
-- Scopes LAN exposure independently for local-only, gateway-only, direct-model
-  ports only, or both gateway and direct model ports.
-- Supports saved model launch variants, auto-detected, embedded, or explicit
-  per-model vision head/projector choices, dynamic-resolution image token
-  settings, separate MTP head selection for compatible `--mtp-head` runtimes,
-  upstream-style speculative draft helpers, and reasoning/template-oriented
-  launch options.
-- Shows live runtime metrics, token counters, logs, jobs, GPU summary, and model
-  state in a WPF Overview page.
-- Preserves last-known token metrics during short runtime metric gaps.
-- Optionally writes and syncs OpenCode local model/provider entries without
-  making OpenCode a requirement. OpenCode entries can use the shared gateway or
-  direct per-model endpoints.
+  endpoint that starts requested models on their saved direct ports, proxies
+  requests, and can either keep existing sessions or switch to a single active
+  model.
+- Scopes LAN exposure independently for gateway and direct model ports.
+- Supports saved launch variants, reasoning/template options, vision
+  head/projector selection, dynamic-resolution image token settings, MTP head
+  selection, and upstream-style speculative draft helpers.
+- Shows loaded sessions, logs, jobs, GPU summary, live slot activity, and
+  two-row token monitors with live, average, and total values for normal and
+  MTP token streams on the Overview page.
+- Optionally writes and syncs OpenCode local model/provider entries through the
+  shared gateway or direct per-model endpoints; automatic sync on launch-save can
+  be disabled.
 - Offers a Start with Windows installer task, enabled by default for fresh
   installs, plus the same setting inside the app.
 - Stores settings, jobs, models, runtimes, migrations, and history in SQLite.
@@ -76,6 +76,10 @@ Windows or inside Ubuntu/WSL without living in a terminal.
 - External/imported models are registration-only deletes by default.
 - Hugging Face downloads reject unsafe Windows filenames, symlink/hardlink
   partials, and incomplete files.
+- Runtime package downloads verify expected byte counts and SHA-256 metadata or
+  companion checksum files before install. Runtime package archives and portable
+  app updates are also validated before extraction to reject absolute paths,
+  traversal paths, and unsafe tar entries.
 - Corrupt settings are backed up before defaults are loaded.
 - Corrupt SQLite database files are quarantined and recreated on startup.
 - Installer updates, repairs, and default uninstalls preserve `data`, models,
@@ -100,7 +104,9 @@ The normal path is prebuilt-first:
    loaded or switches to a single active model.
 6. Open **OpenCode** and add each local model. The app can write gateway-backed
    entries or direct per-model entries, and can auto-sync those entries when
-   saved launch settings or saved variants change.
+   saved launch settings or saved variants change. The app's saved API key is
+   protected in llama.cpp Windows Manager settings, but OpenCode provider config
+   stores the synced key in plain text so OpenCode can call the local endpoint.
 
 Use **Show advanced** in Runtimes only when you need to download source and build
 a custom fork, branch, patch, or runtime target without a prebuilt package. The
@@ -202,11 +208,15 @@ The legacy `LLAMA_CPP_CONSOLE_INNO_SETUP` variable is also accepted.
 Run the local release gate:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-app.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1
+```
+
+That wrapper builds the app, runs the release-hardening tests, verifies
+formatting, checks diff whitespace, and audits vulnerable packages. Include
+packaging smoke checks on a release machine with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
 
 CI runs the same gate on `windows-latest` through
@@ -227,6 +237,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 The publish and installer scripts write `.sha256` companion files beside the
 generated binaries. The app updater requires a matching SHA-256 asset before
 staging an update.
+
+Add `-RequireCleanTree` to publish, installer, or release-gate commands when
+packaging artifacts that must come from a clean Git worktree.
 
 For v1.1.2 and newer, publish the `LlamaCppWindowsManager-win-x64.zip` archive
 and its `.sha256` file. The zip contains both the renamed executable and the

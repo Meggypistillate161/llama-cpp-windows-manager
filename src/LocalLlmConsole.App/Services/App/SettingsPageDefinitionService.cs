@@ -11,7 +11,7 @@ public sealed class SettingsPageDefinitionService
         new("Window", "Start with Windows", "startWithWindows", AppPreferenceService.YesNoLabel(settings.StartWithWindows), "choice", AppPreferenceService.YesNoOptions(),
             ToolTip: "Registers or removes this app from the current user's Windows startup apps."),
         new("OpenCode", "Sync on launch save", "autoSaveOpenCodeOnLaunchSettingsSave", AppPreferenceService.YesNoLabel(settings.AutoSaveOpenCodeOnLaunchSettingsSave), "choice", AppPreferenceService.YesNoOptions(),
-            ToolTip: "Automatically rewrites OpenCode local model entries after saved model launch settings or saved variants change."),
+            ToolTip: "Automatically rewrites OpenCode local model entries after saved model launch settings or saved variants change. OpenCode provider config stores the synced API key in plain text."),
         new("Model", "Auto unload idle min", "autoUnloadIdleMinutes", settings.AutoUnloadIdleMinutes.ToString(CultureInfo.InvariantCulture),
             ToolTip: "Whole number of idle minutes before quiet loaded models are stopped automatically. Use 0 to disable idle auto-unload."),
         new("Runtime", "Delete source after build", "deleteRuntimeSourceAfterSuccessfulBuild", AppPreferenceService.YesNoLabel(settings.DeleteRuntimeSourceAfterSuccessfulBuild), "choice", AppPreferenceService.YesNoOptions(),
@@ -25,7 +25,7 @@ public sealed class SettingsPageDefinitionService
         new("Network", "Gateway policy", "autoLoadGatewayPolicy", AppPreferenceService.GatewaySwapPolicyLabel(settings.AutoLoadGatewayPolicy), "choice", AppPreferenceService.GatewaySwapPolicyOptions(),
             ToolTip: "Prefer keeping loaded models leaves existing sessions running. Single active model unloads other models before loading the requested model to free VRAM."),
         new("Network", "API key", "modelApiKey", settings.ModelApiKey, "secret", Action: "Generate",
-            ToolTip: "Bearer key required by local OpenAI-compatible endpoints. Must be at least 32 non-whitespace characters; leaving it blank generates a new key on save."),
+            ToolTip: "Bearer key required by local OpenAI-compatible endpoints. Must be at least 32 non-whitespace characters; leaving it blank generates a new key on save. OpenCode sync copies this key into OpenCode provider config in plain text."),
         new("Logs", "Max log file MB", "maxLogFileSizeMb", settings.MaxLogFileSizeMb.ToString(CultureInfo.InvariantCulture),
             ToolTip: "Whole number from 1 to 4096. Limits each app, runtime, or job log file before rotation or trimming.")
     ];

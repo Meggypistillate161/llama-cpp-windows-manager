@@ -123,14 +123,41 @@ public sealed partial class ReleaseHardeningTests
 
         Assert.Contains("marker='marker'\"'\"'1'", markerCommand, StringComparison.Ordinal);
         Assert.Contains("/proc/[0-9]*/cmdline", markerCommand, StringComparison.Ordinal);
+        Assert.Contains("remaining=0", markerCommand, StringComparison.Ordinal);
+        Assert.Contains("exit \"$remaining\"", markerCommand, StringComparison.Ordinal);
         Assert.Contains("'/opt/llama/bin/llama-server'", fallbackCommand, StringComparison.Ordinal);
         Assert.Contains("\"--port\"*'8081'", fallbackCommand, StringComparison.Ordinal);
+        Assert.Contains("remaining=0", fallbackCommand, StringComparison.Ordinal);
         Assert.Equal("wsl.exe", startInfo.FileName);
         Assert.False(startInfo.UseShellExecute);
         Assert.True(startInfo.CreateNoWindow);
         Assert.Equal(ProcessWindowStyle.Hidden, startInfo.WindowStyle);
         Assert.Equal(["-d", "Ubuntu-24.04", "--", "bash", "-lc", "echo stop"], startInfo.ArgumentList.ToArray());
         Assert.Equal("", WslRuntimeStopService.BuildStopCommand("", 8081, ""));
+    }
+
+    [Fact]
+    public async Task WslRuntimeStopServiceReportsUnverifiedCleanup()
+    {
+        var root = CreateTempRoot();
+        var logPath = Path.Combine(root, "logs", "runtime.log");
+        var runner = new ScriptedProcessRunner(_ => new ProcessRunResult(1, "", "still running"));
+        var service = new WslRuntimeStopService(runner, () => "wsl.exe");
+
+        var result = await service.StopAsync(new WslRuntimeStopRequest(
+            AppSettings.CreateDefault(root) with { WslDistro = "Ubuntu-24.04", Port = 8081 },
+            "/opt/llama/bin/llama-server",
+            "marker",
+            logPath,
+            BoundedLogFile.MegabytesToBytes(1)),
+            TestContext.Current.CancellationToken);
+        var log = await File.ReadAllTextAsync(logPath, TestContext.Current.CancellationToken);
+
+        Assert.True(result.StopRequested);
+        Assert.False(result.VerifiedStopped);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("still running", log, StringComparison.Ordinal);
+        Assert.Contains("could not verify shutdown", log, StringComparison.Ordinal);
     }
 
 

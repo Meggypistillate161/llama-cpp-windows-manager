@@ -3,7 +3,16 @@ namespace LocalLlmConsole.Services;
 public sealed record WslRuntimeStopRequest(
     AppSettings Settings,
     string ExecutablePath,
-    string ProcessMarker);
+    string ProcessMarker,
+    string LogPath = "",
+    long MaxLogBytes = 0);
+
+public sealed record WslRuntimeStopResult(
+    bool StopRequested,
+    bool VerifiedStopped,
+    int ExitCode,
+    string Output,
+    string Error);
 
 public sealed class WslRuntimeStopService
 {
@@ -20,26 +29,52 @@ public sealed class WslRuntimeStopService
     }
 
     public void Stop(WslRuntimeStopRequest request)
+        => StopAsync(request).GetAwaiter().GetResult();
+
+    public async Task<WslRuntimeStopResult> StopAsync(WslRuntimeStopRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Settings.WslDistro))
-            return;
+            return new WslRuntimeStopResult(false, true, 0, "", "");
 
         try
         {
             var command = BuildStopCommand(request.ExecutablePath, request.Settings.Port, request.ProcessMarker);
-            if (string.IsNullOrWhiteSpace(command)) return;
+            if (string.IsNullOrWhiteSpace(command))
+                return new WslRuntimeStopResult(false, true, 0, "", "");
 
-            _ = _processRunner.RunAsync(
+            var result = await _processRunner.RunAsync(
                     BuildStopStartInfo(_wslExe(), request.Settings.WslDistro, command),
-                    StopTimeout)
-                .GetAwaiter()
-                .GetResult();
+                    StopTimeout,
+                    cancellationToken);
+            await LogStopResultAsync(request, result);
+            return new WslRuntimeStopResult(true, result.ExitCode == 0, result.ExitCode, result.Output, result.Error);
         }
-        catch
+        catch (OperationCanceledException)
         {
-            // Best-effort cleanup only; the Windows parent process is already stopped or stopping.
+            throw;
         }
+        catch (Exception ex)
+        {
+            await LogStopExceptionAsync(request, ex);
+            return new WslRuntimeStopResult(true, false, -1, "", ex.Message);
+        }
+    }
+
+    private static async Task LogStopResultAsync(WslRuntimeStopRequest request, ProcessRunResult result)
+    {
+        if (string.IsNullOrWhiteSpace(request.LogPath) || request.MaxLogBytes <= 0) return;
+        var text = string.Concat(result.Output, result.Error);
+        if (!string.IsNullOrWhiteSpace(text))
+            await BoundedLogFile.AppendAsync(request.LogPath, text + Environment.NewLine, request.MaxLogBytes);
+        if (result.ExitCode != 0)
+            await RuntimeBuildJobService.AppendJobLogAsync(request.LogPath, JobStatus.Running, $"Warning: WSL runtime cleanup could not verify shutdown. Exit code {result.ExitCode}.", request.MaxLogBytes);
+    }
+
+    private static async Task LogStopExceptionAsync(WslRuntimeStopRequest request, Exception ex)
+    {
+        if (string.IsNullOrWhiteSpace(request.LogPath) || request.MaxLogBytes <= 0) return;
+        await RuntimeBuildJobService.AppendJobLogAsync(request.LogPath, JobStatus.Running, $"Warning: WSL runtime cleanup failed: {ex.Message}", request.MaxLogBytes);
     }
 
     public static ProcessStartInfo BuildStopStartInfo(string wslExe, string distro, string command)
@@ -69,7 +104,15 @@ public sealed class WslRuntimeStopService
             "for pid in $(pgrep -f -- llama-server 2>/dev/null); do",
             "cmd=$(tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null || true);",
             $"case \"$cmd\" in *{CommandLineService.BashQuote(executable)}*\"--port\"*{CommandLineService.BashQuote(port.ToString(CultureInfo.InvariantCulture))}*) kill \"$pid\" 2>/dev/null || true;; esac;",
-            "done"
+            "done;",
+            "sleep 0.2;",
+            "remaining=0;",
+            "for cmdline in /proc/[0-9]*/cmdline; do",
+            "test -r \"$cmdline\" || continue;",
+            "cmd=$(tr '\\0' ' ' < \"$cmdline\" 2>/dev/null || true);",
+            $"case \"$cmd\" in *{CommandLineService.BashQuote(executable)}*\"--port\"*{CommandLineService.BashQuote(port.ToString(CultureInfo.InvariantCulture))}*) remaining=1;; esac;",
+            "done;",
+            "exit \"$remaining\""
         });
     }
 
@@ -83,7 +126,15 @@ public sealed class WslRuntimeStopService
             "test -r \"$cmdline\" || continue;",
             "cmd=$(tr '\\0' ' ' < \"$cmdline\" 2>/dev/null || true);",
             "case \"$cmd\" in *\"$marker\"*) pid=${cmdline#/proc/}; pid=${pid%/cmdline}; kill \"$pid\" 2>/dev/null || true;; esac;",
-            "done"
+            "done;",
+            "sleep 0.2;",
+            "remaining=0;",
+            "for cmdline in /proc/[0-9]*/cmdline; do",
+            "test -r \"$cmdline\" || continue;",
+            "cmd=$(tr '\\0' ' ' < \"$cmdline\" 2>/dev/null || true);",
+            "case \"$cmd\" in *\"$marker\"*) remaining=1;; esac;",
+            "done;",
+            "exit \"$remaining\""
         });
     }
 }

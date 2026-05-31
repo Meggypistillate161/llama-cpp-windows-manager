@@ -179,6 +179,7 @@ public sealed class AppUpdateService
         var extractRoot = Path.Combine(stageRoot, "extracted");
         if (Directory.Exists(extractRoot)) Directory.Delete(extractRoot, recursive: true);
         Directory.CreateDirectory(extractRoot);
+        ArchiveSafetyService.ValidateZipArchiveEntries(assetPath, extractRoot);
         ZipFile.ExtractToDirectory(assetPath, extractRoot);
         var stagedExe = new[] { PortableExeName, LegacyPortableExeName }
             .SelectMany(name => Directory.EnumerateFiles(extractRoot, name, SearchOption.AllDirectories))

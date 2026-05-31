@@ -13,15 +13,37 @@ public static class RuntimePackageInstallFileService
         => Path.Combine(cacheRoot, "runtime-packages", selection.Preset.Id, ModelCatalogService.SafeId(selection.ReleaseTag));
 
     public static async Task DownloadAssetAsync(HttpClient client, RuntimePackageAsset asset, string destination, CancellationToken cancellationToken = default)
+        => await DownloadAssetAsync(client, asset, destination, requireChecksum: true, cancellationToken);
+
+    public static async Task DownloadAssetAsync(HttpClient client, RuntimePackageAsset asset, string destination, bool requireChecksum, CancellationToken cancellationToken = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? ".");
         using var request = new HttpRequestMessage(HttpMethod.Get, asset.DownloadUrl);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("LocalLlmConsole", "1.0"));
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var target = File.Create(destination);
-        await source.CopyToAsync(target, cancellationToken);
+        if (asset.SizeBytes > 0
+            && response.Content.Headers.ContentLength is { } contentLength
+            && contentLength != asset.SizeBytes)
+        {
+            throw new InvalidOperationException($"Runtime package size mismatch for {asset.Name}. Expected {asset.SizeBytes:N0} bytes, server reported {contentLength:N0} bytes.");
+        }
+
+        await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+        await using (var target = File.Create(destination))
+        {
+            await source.CopyToAsync(target, cancellationToken);
+        }
+
+        try
+        {
+            await RuntimePackageAssetVerifier.VerifyAsync(client, asset, destination, requireChecksum, cancellationToken);
+        }
+        catch
+        {
+            try { File.Delete(destination); } catch { }
+            throw;
+        }
     }
 
     public static void ExtractArchive(string archivePath, string destination)
@@ -95,7 +117,9 @@ public static class RuntimePackageInstallFileService
             {
                 ["name"] = asset.Name,
                 ["downloadUrl"] = asset.DownloadUrl,
-                ["sizeBytes"] = asset.SizeBytes
+                ["sizeBytes"] = asset.SizeBytes,
+                ["sha256"] = asset.Sha256,
+                ["checksumUrl"] = asset.ChecksumUrl
             });
         }
         metadata["assets"] = assets;
@@ -112,12 +136,14 @@ public static class RuntimePackageInstallFileService
         var name = Path.GetFileName(archivePath);
         if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
+            ArchiveSafetyService.ValidateZipArchiveEntries(archivePath, destination);
             ZipFile.ExtractToDirectory(archivePath, destination, overwriteFiles: true);
             return;
         }
 
         if (name.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase))
         {
+            ArchiveSafetyService.ValidateTarGzipArchiveEntries(archivePath, destination);
             using var file = File.OpenRead(archivePath);
             using var gzip = new GZipStream(file, CompressionMode.Decompress);
             TarFile.ExtractToDirectory(gzip, destination, overwriteFiles: true);

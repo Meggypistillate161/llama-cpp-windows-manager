@@ -21,7 +21,7 @@ public sealed class GpuSummaryCache
 
     public string Store(string summary, DateTimeOffset capturedAt)
     {
-        _summary = string.IsNullOrWhiteSpace(summary) ? "Unavailable" : summary;
+        _summary = string.IsNullOrWhiteSpace(summary) ? "Unavailable" : GpuStatusService.NormalizeMetricSeparators(summary);
         _capturedAt = capturedAt;
         return _summary;
     }

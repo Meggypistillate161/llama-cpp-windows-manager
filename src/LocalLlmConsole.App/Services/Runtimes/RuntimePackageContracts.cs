@@ -12,7 +12,12 @@ public sealed record RuntimePackagePreset(
     string PackageSourceKey = "",
     string RepositoryUrl = "");
 
-public sealed record RuntimePackageAsset(string Name, string DownloadUrl, long SizeBytes);
+public sealed record RuntimePackageAsset(
+    string Name,
+    string DownloadUrl,
+    long SizeBytes,
+    string Sha256 = "",
+    string ChecksumUrl = "");
 
 public sealed record RuntimePackageRelease(
     string TagName,

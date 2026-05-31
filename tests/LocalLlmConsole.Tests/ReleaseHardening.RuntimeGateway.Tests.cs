@@ -31,6 +31,7 @@ public sealed partial class ReleaseHardeningTests
         var formatted = GpuStatusService.FormatNvidiaSmiCsvLine("0, NVIDIA RTX, 76, 62, 12288, 24576");
 
         Assert.Equal("GPU 0: 76% | 62C | 12.0/24.0 GiB", formatted);
+        Assert.Equal("GPU 0: 76% | 62C | 12.0/24.0 GiB", GpuStatusService.NormalizeMetricSeparators("GPU 0: 76%|62C|12.0/24.0 GiB"));
     }
 
 
@@ -184,6 +185,27 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal(model, ModelGatewayRequestResolver.ResolveModel([model], "Qwen3-8B.gguf"));
         Assert.Equal(model, ModelGatewayRequestResolver.ResolveModel([model], "Qwen3-8B"));
         Assert.Null(ModelGatewayRequestResolver.ResolveModel([model], "other"));
+    }
+
+    [Fact]
+    public void ModelGatewayRequestBodyReaderRejectsOversizedBodies()
+    {
+        var small = System.Text.Encoding.UTF8.GetBytes("""{"model":"qwen"}""");
+        var tooLarge = System.Text.Encoding.UTF8.GetBytes("""{"model":"qwen","messages":["0123456789"]}""");
+        var source = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "Gateway", "ModelGatewayService.cs"));
+
+        var read = ModelGatewayRequestBodyReader.ReadBodyBuffer(new MemoryStream(small), small.Length, small.Length);
+        var declared = Assert.Throws<ModelGatewayRequestBodyTooLargeException>(() =>
+            ModelGatewayRequestBodyReader.ReadBodyBuffer(new MemoryStream(small), small.Length + 1, small.Length));
+        var streamed = Assert.Throws<ModelGatewayRequestBodyTooLargeException>(() =>
+            ModelGatewayRequestBodyReader.ReadBodyBuffer(new MemoryStream(tooLarge), -1, small.Length));
+
+        Assert.Equal(small, read);
+        Assert.Contains("too large", declared.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("too large", streamed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("413", source, StringComparison.Ordinal);
+        Assert.Contains("request_too_large", source, StringComparison.Ordinal);
+        Assert.Contains("MaxRequestBodyBytes", source, StringComparison.Ordinal);
     }
 
 

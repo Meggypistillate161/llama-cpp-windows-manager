@@ -4,10 +4,10 @@ Audit date: 2026-05-31
 
 ## Executive Summary
 
-Overall release posture: **v1.1.2 is ready as an unsigned community release
-with explicit SmartScreen and SHA-256 verification notes. Trusted code-signing
-and broader clean-machine/hardware validation remain follow-up hardening work,
-not hidden blockers for the current public release.**
+Overall release posture: **v1.1.3 is ready as an unsigned community release
+candidate with explicit SmartScreen and SHA-256 verification notes. Trusted
+code-signing and broader clean-machine/hardware validation remain follow-up
+hardening work, not hidden blockers for the current public release candidate.**
 
 The core release blockers from the full audit have been addressed in code:
 
@@ -19,14 +19,19 @@ The core release blockers from the full audit have been addressed in code:
 - Job IDs use GUIDs.
 - Hugging Face downloads are bounded to the models folder, block duplicate destinations, reject unsafe local filenames and partial-file links, preflight disk space, and require expected-size or SHA-256 verification before model registration.
 - Model serving now requires a strong API key even in local-only mode, and the persisted key is protected with current-user Windows data protection.
+- Auto-load gateway request bodies are bounded and oversized payloads return a
+  `413 request_too_large` response before proxying.
 - Runtime source IDs loaded from custom JSON are sanitized, and recursive runtime deletes are path-bounded.
-- WSL shutdown no longer uses a broad port-only kill.
+- WSL shutdown no longer uses a broad port-only kill, and WSL cleanup now
+  verifies whether the targeted runtime stopped and logs failures for diagnosis.
 - The WSL Linux page now detects WSL, installed non-Docker distros, the default distro, and shows focused WSL/Ubuntu install or update actions.
 - Release publish omits PDB files and supports certificate signing with `-CertificateThumbprint` and `-RequireSigned`.
 - App update checks are staged through the workspace cache and replace the portable exe only after the running process closes.
 - App update staging verifies a matching SHA-256 companion asset when present and requires same-certificate signature continuity when the installed app is already signed.
 - Runtime onboarding is prebuilt-first: official llama.cpp release packages can
   be installed directly before using source builds.
+- Runtime package downloads verify expected sizes and SHA-256 metadata or
+  companion checksum files before installation.
 - The Windows and WSL setup workflows now cover CPU, CUDA, Vulkan, and Intel
   Arc SYCL prerequisites before advanced source builds start.
 - Per-model launch settings now include vision image token allowances and map them to llama.cpp server flags.
@@ -42,7 +47,8 @@ The core release blockers from the full audit have been addressed in code:
   image token allowances, separate MTP head choices for compatible runtimes,
   and OpenCode vision metadata when synced.
 - OpenCode sync can be automatic on launch-setting/variant save or manually
-  controlled from the OpenCode page.
+  controlled from the OpenCode page, with Settings and docs calling out that
+  OpenCode provider config stores the synced API key in plain text.
 - Fresh installer setups offer Start with Windows by default, with a matching
   current-user startup preference in Settings.
 - The local app service now keeps request handlers observed and tolerates
@@ -69,7 +75,7 @@ The core release blockers from the full audit have been addressed in code:
 
 - Severity: Medium
 - Area: Distribution
-- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.1.2 asset naming are confirmed.
+- Status: Update UI, staged installer, checksum verification, and signed-app signature continuity are implemented; the public repository and v1.1.3 asset naming are confirmed.
 - Required result: Latest GitHub release contains `LlamaCppWindowsManager-win-x64.zip`, matching SHA-256 companion assets, and release notes suitable for the completion popup.
 
 ### WSL and hardware matrix
@@ -127,6 +133,19 @@ low-risk items that were safe to take immediately:
 - `LogFileService.Head` now detects byte-order marks like `Tail` already did.
 - `GgufMetadataReader` now ignores unsupported/future GGUF versions instead of
   silently parsing unknown metadata layouts.
+- Runtime package and portable app update archives are now prevalidated for
+  absolute paths, traversal paths, and unsafe tar link/device entries before
+  extraction.
+- Runtime package downloads now require size/checksum verification metadata and
+  delete failed downloads after verification errors.
+- The auto-load gateway now rejects oversized request bodies with `413` instead
+  of buffering unbounded client payloads.
+- WSL runtime cleanup now returns and logs verification details instead of
+  swallowing all stop failures.
+- Release scripts can be run with `-RequireCleanTree` so publish, installer, and
+  release-gate packaging fail on dirty worktrees.
+- Overview runtime metrics now use compact token monitors for normal and MTP
+  streams, a live Slots card, and normalized GPU metric separators.
 
 Verification for this hardening pass:
 
@@ -134,7 +153,7 @@ Verification for this hardening pass:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
 
-Result on 2026-05-31: release-hardening tests passed (`422/422`), formatting was
+Result on 2026-06-01: release-hardening tests passed (`432/432`), formatting was
 clean, the Release build succeeded with zero warnings, no vulnerable packages
 were found, the diff had no whitespace errors, and publish/installer artifact
 checks passed locally.
@@ -156,6 +175,6 @@ checks passed locally.
 
 ## Release Decision
 
-v1.1.2 is acceptable as a clearly unsigned public community release. A future
-trusted/stable Windows distribution should add Authenticode signing, broader
-clean-machine smoke testing, and wider hardware matrix validation.
+v1.1.3 is acceptable as a clearly unsigned public community release candidate.
+A future trusted/stable Windows distribution should add Authenticode signing,
+broader clean-machine smoke testing, and wider hardware matrix validation.

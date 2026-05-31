@@ -11,7 +11,8 @@ public sealed record ModelGatewayOptions(
     string AccessMode,
     int Port,
     string ApiKey,
-    ModelGatewaySwapPolicy SwapPolicy)
+    ModelGatewaySwapPolicy SwapPolicy,
+    long MaxRequestBodyBytes = 64L * 1024 * 1024)
 {
     public bool AllowLanAccess
         => AppPreferenceService.GatewayAllowsLanAccess(AccessMode);

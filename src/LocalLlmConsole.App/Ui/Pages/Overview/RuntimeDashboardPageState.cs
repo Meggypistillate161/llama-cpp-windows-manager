@@ -8,17 +8,17 @@ public sealed class RuntimeDashboardPageState
 {
     public Grid? ModelMetric { get; private set; }
 
-    public Grid? RuntimeMetric { get; private set; }
+    public Grid? GpuMetric { get; private set; }
 
     public Grid? RequestsMetric { get; private set; }
 
-    public Grid? GenerationRateMetric { get; private set; }
+    public Grid? TokensMetric { get; private set; }
 
-    public TextBlock? GenerationRateLastKnown { get; private set; }
+    public TextBlock? TokensLastKnown { get; private set; }
 
-    public Grid? TotalTokensMetric { get; private set; }
+    public Grid? MtpTokensMetric { get; private set; }
 
-    public Grid? GpuMetric { get; private set; }
+    public Grid? SlotsMetric { get; private set; }
 
     public WpfTextBox? RuntimeLogBox { get; private set; }
 
@@ -31,12 +31,12 @@ public sealed class RuntimeDashboardPageState
         ArgumentNullException.ThrowIfNull(controls);
 
         ModelMetric = controls.RuntimeDashboardModel;
-        RuntimeMetric = controls.RuntimeDashboardRuntime;
-        RequestsMetric = controls.RuntimeDashboardRequests;
-        GenerationRateMetric = controls.RuntimeDashboardGenerationRate;
-        GenerationRateLastKnown = controls.RuntimeDashboardGenerationRateLastKnown;
-        TotalTokensMetric = controls.RuntimeDashboardTotalTokens;
         GpuMetric = controls.RuntimeDashboardGpu;
+        RequestsMetric = controls.RuntimeDashboardRequests;
+        TokensMetric = controls.RuntimeDashboardTokens;
+        TokensLastKnown = controls.RuntimeDashboardTokensLastKnown;
+        MtpTokensMetric = controls.RuntimeDashboardMtpTokens;
+        SlotsMetric = controls.RuntimeDashboardSlots;
         RuntimeLogBox = controls.RuntimeLogBox;
         RuntimeMetricsGrid = controls.RuntimeMetricsGrid;
         ModelProgress = null;

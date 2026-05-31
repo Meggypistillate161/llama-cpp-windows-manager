@@ -36,12 +36,13 @@ public static class RuntimePackageReleaseClient
             var name = assetNode["name"]?.ToString() ?? "";
             var url = assetNode["browser_download_url"]?.ToString() ?? "";
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url)) continue;
-            assets.Add(new RuntimePackageAsset(name, url, LongValue(assetNode["size"])));
+            assets.Add(new RuntimePackageAsset(name, url, LongValue(assetNode["size"]), AssetSha256(assetNode)));
         }
 
         if (assets.Count == 0)
             throw new InvalidOperationException($"Release {tag} did not include usable downloadable assets.");
 
+        var verifiedAssets = AttachChecksumCompanions(assets);
         return new RuntimePackageRelease(
             tag,
             root["target_commitish"]?.ToString() ?? "",
@@ -49,7 +50,7 @@ public static class RuntimePackageReleaseClient
             DateTimeOffset.TryParse(root["published_at"]?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var publishedAt)
                 ? publishedAt
                 : DateTimeOffset.MinValue,
-            assets);
+            verifiedAssets);
     }
 
     public static RuntimePackageRelease ParseHuggingFaceModelJson(string json, RuntimePackagePreset? preset = null)
@@ -74,7 +75,8 @@ public static class RuntimePackageReleaseClient
             assets.Add(new RuntimePackageAsset(
                 name,
                 $"{HuggingFaceModelPageUrl(modelId)}/resolve/{Uri.EscapeDataString(revision)}/{EscapeHuggingFacePath(name)}?download=true",
-                LongValue(assetNode["size"])));
+                LongValue(assetNode["size"]),
+                AssetSha256(assetNode)));
         }
 
         if (assets.Count == 0)
@@ -91,6 +93,43 @@ public static class RuntimePackageReleaseClient
                 ? publishedAt
                 : DateTimeOffset.MinValue,
             assets);
+    }
+
+    private static IReadOnlyList<RuntimePackageAsset> AttachChecksumCompanions(IReadOnlyList<RuntimePackageAsset> assets)
+        => assets
+            .Select(asset => string.IsNullOrWhiteSpace(asset.ChecksumUrl)
+                ? asset with { ChecksumUrl = ChecksumUrlFor(assets, asset.Name) }
+                : asset)
+            .ToArray();
+
+    private static string ChecksumUrlFor(IReadOnlyList<RuntimePackageAsset> assets, string assetName)
+    {
+        if (string.IsNullOrWhiteSpace(assetName)) return "";
+        var expectedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            assetName + ".sha256",
+            assetName + ".sha256.txt",
+            assetName + ".sha256sum",
+            Path.ChangeExtension(assetName, ".sha256")
+        };
+        return assets.FirstOrDefault(asset => expectedNames.Contains(asset.Name))?.DownloadUrl ?? "";
+    }
+
+    private static string AssetSha256(JsonObject assetNode)
+    {
+        foreach (var value in new[]
+        {
+            assetNode["digest"]?.ToString(),
+            assetNode["sha256"]?.ToString(),
+            assetNode["checksum"]?.ToString(),
+            assetNode["lfs"]?["sha256"]?.ToString()
+        })
+        {
+            var sha256 = RuntimePackageAssetVerifier.NormalizeSha256(value ?? "");
+            if (!string.IsNullOrWhiteSpace(sha256)) return sha256;
+        }
+
+        return "";
     }
 
     private static bool IsHuggingFaceApiUrl(string url)

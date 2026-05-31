@@ -69,6 +69,7 @@ public sealed partial class ReleaseHardeningTests
     public async Task JobEngineValidatesStatusTransitionsAgainstStoredJobState()
     {
         var root = CreateTempRoot();
+        var stateStoreJobsSource = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "Infrastructure", "StateStore.Jobs.cs"));
         await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
         await store.InitializeAsync();
         var jobs = new JobEngine(store, Path.Combine(root, "logs"));
@@ -86,6 +87,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("""{"step":2}""", stored.PayloadJson);
         Assert.True(JobEngine.IsValidStatusTransition(JobStatus.Failed, JobStatus.Queued));
         Assert.False(JobEngine.IsValidStatusTransition(JobStatus.Completed, JobStatus.Running));
+        Assert.Contains("TryUpdateJobAsync", stateStoreJobsSource, StringComparison.Ordinal);
+        Assert.Contains("AND status = $expected_status", stateStoreJobsSource, StringComparison.Ordinal);
     }
 
 

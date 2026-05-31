@@ -33,7 +33,6 @@ public sealed record RuntimeDashboardRefreshApplicationActions(
     Action<AppSettings?> SetActiveRuntimeSettings,
     Func<Task<(string Model, string Runtime)>> ActiveRuntimeLabelsAsync,
     Action<string> RefreshModelStatusMetric,
-    Action<string, bool> SetRuntimeMetric,
     Func<Task> SaveActiveRuntimeSessionsAsync,
     Action UpdateRuntimeModelProgress,
     Func<Task<string>> CachedGpuSummaryAsync,
@@ -112,12 +111,9 @@ public sealed class RuntimeDashboardRefreshApplicationService
                 ? null
                 : pollResults.FirstOrDefault(result => string.Equals(result.RuntimeKey, runtimeKey, StringComparison.Ordinal));
 
-            var (modelName, runtimeName) = await actions.ActiveRuntimeLabelsAsync();
+            var (modelName, _) = await actions.ActiveRuntimeLabelsAsync();
             if (request.RenderOverview)
-            {
                 actions.RefreshModelStatusMetric(modelName);
-                actions.SetRuntimeMetric(runtimeName, request.RuntimeIsRunning);
-            }
 
             if (request.RuntimeState == LlamaRuntimeState.Failed)
                 await actions.SaveActiveRuntimeSessionsAsync();
@@ -163,7 +159,6 @@ public sealed class RuntimeDashboardRefreshApplicationService
         ArgumentNullException.ThrowIfNull(actions.SetActiveRuntimeSettings);
         ArgumentNullException.ThrowIfNull(actions.ActiveRuntimeLabelsAsync);
         ArgumentNullException.ThrowIfNull(actions.RefreshModelStatusMetric);
-        ArgumentNullException.ThrowIfNull(actions.SetRuntimeMetric);
         ArgumentNullException.ThrowIfNull(actions.SaveActiveRuntimeSessionsAsync);
         ArgumentNullException.ThrowIfNull(actions.UpdateRuntimeModelProgress);
         ArgumentNullException.ThrowIfNull(actions.CachedGpuSummaryAsync);

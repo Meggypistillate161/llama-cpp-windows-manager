@@ -25,12 +25,13 @@ public partial class MainWindow
     private void ApplyRuntimeMetricSummary(RuntimeMetricSummaryPresentation summary)
     {
         if (summary.LastKnownCapturedAt is { } capturedAt)
-            SetLastKnownMetricText(_runtimeDashboardPage.GenerationRateLastKnown, capturedAt, DateTimeOffset.UtcNow);
+            SetLastKnownMetricText(_runtimeDashboardPage.TokensLastKnown, capturedAt, DateTimeOffset.UtcNow);
         else
-            ClearLastKnownMetricText(_runtimeDashboardPage.GenerationRateLastKnown);
+            ClearLastKnownMetricText(_runtimeDashboardPage.TokensLastKnown);
 
-        SetMetricText(_runtimeDashboardPage.GenerationRateMetric, summary.GenerationRate);
-        SetMetricText(_runtimeDashboardPage.TotalTokensMetric, summary.TotalTokens);
+        SetMetricText(_runtimeDashboardPage.TokensMetric, summary.Tokens);
+        SetMetricText(_runtimeDashboardPage.MtpTokensMetric, summary.MtpTokens);
+        SetMetricText(_runtimeDashboardPage.SlotsMetric, summary.Slots);
         SetMetricText(_runtimeDashboardPage.RequestsMetric, summary.Settings);
     }
 
@@ -78,6 +79,13 @@ public partial class MainWindow
             _runtimeDashboardPage.RuntimeLogBox.CaretIndex = _runtimeDashboardPage.RuntimeLogBox.Text.Length;
             _runtimeDashboardPage.RuntimeLogBox.ScrollToEnd();
         }
+    }
+
+    private RuntimeMtpTokenSnapshot? ReadMtpTokenStatsFromRuntimeLog()
+    {
+        var selectedLogPath = _sessions.SelectedSnapshot()?.LogPath;
+        return _coreServices.Runtime.RuntimeLogTail.MtpTokenStats(
+            string.IsNullOrWhiteSpace(selectedLogPath) ? _llama.LogPath : selectedLogPath);
     }
 
     private void ResetMetricCounters()

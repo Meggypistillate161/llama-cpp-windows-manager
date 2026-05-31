@@ -13,8 +13,11 @@ public static class GpuStatusService
         var used = double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var usedMb) ? usedMb / 1024 : 0;
         var total = double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var totalMb) ? totalMb / 1024 : 0;
         var memory = total > 0 ? $"{used:0.0}/{total:0.0} GiB" : $"{parts[4]}/{parts[5]} MiB";
-        return $"GPU {index}: {utilization}% | {temperature}C | {memory}";
+        return NormalizeMetricSeparators($"GPU {index}: {utilization}% | {temperature}C | {memory}");
     }
+
+    public static string NormalizeMetricSeparators(string text)
+        => Regex.Replace(text.Trim(), @"\s*\|\s*", " | ");
 
     public static string FormatIntelArcStatus(string? syclLsLine)
     {

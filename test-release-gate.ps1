@@ -3,6 +3,7 @@ param(
   [string] $Runtime = "win-x64",
   [string] $Configuration = "Release",
   [switch] $SkipRestore,
+  [switch] $RequireCleanTree,
   [switch] $IncludePublish,
   [switch] $IncludeInstaller,
   [string] $InnoSetupPath = "",
@@ -49,6 +50,31 @@ function Invoke-GateStep {
   & $Action
   if ($LASTEXITCODE -ne 0) {
     throw "$Name failed."
+  }
+}
+
+function Assert-CleanGitTree {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path
+  )
+
+  $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+  if (-not $git) {
+    throw "Git was not found. Install Git or omit -RequireCleanTree."
+  }
+
+  & $git.Source -C $Path rev-parse --is-inside-work-tree | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Clean-tree check requires a Git worktree: $Path"
+  }
+
+  $status = @(& $git.Source -C $Path status --porcelain --untracked-files=all)
+  if ($LASTEXITCODE -ne 0) {
+    throw "git status failed while checking the release worktree."
+  }
+  if ($status.Count -ne 0) {
+    throw "Release requires a clean Git worktree. Commit, stash, or remove changes before retrying:`n$($status -join [Environment]::NewLine)"
   }
 }
 
@@ -170,6 +196,12 @@ if (-not (Test-Path -LiteralPath $dotnet)) {
   throw "Configured dotnet path was not found: $dotnet"
 }
 
+if ($RequireCleanTree) {
+  Invoke-GateStep "Verify clean Git worktree" {
+    Assert-CleanGitTree -Path $RepoRoot
+  }
+}
+
 $buildArgs = @(
   "-NoProfile",
   "-ExecutionPolicy",
@@ -221,6 +253,9 @@ if ($IncludePublish) {
   if ($RequireSigned) {
     $publishArgs += "-RequireSigned"
   }
+  if ($RequireCleanTree) {
+    $publishArgs += "-RequireCleanTree"
+  }
 
   Invoke-GateStep "Publish app" {
     & powershell.exe @publishArgs
@@ -251,6 +286,9 @@ if ($IncludeInstaller) {
   }
   if ($RequireSigned) {
     $installerArgs += "-RequireSigned"
+  }
+  if ($RequireCleanTree) {
+    $installerArgs += "-RequireCleanTree"
   }
   if ($IncludePublish) {
     $installerArgs += "-SkipPublish"

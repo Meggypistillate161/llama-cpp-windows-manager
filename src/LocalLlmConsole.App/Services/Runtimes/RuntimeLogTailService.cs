@@ -12,6 +12,21 @@ public sealed record RuntimeLogTailResult(
 
 public sealed class RuntimeLogTailService
 {
+    public RuntimeMtpTokenSnapshot? MtpTokenStats(string logPath, int maxCharacters = 16000)
+    {
+        if (string.IsNullOrWhiteSpace(logPath) || !File.Exists(logPath))
+            return null;
+
+        try
+        {
+            return RuntimeDashboardService.ParseMtpTokenStats(LogFileService.Tail(logPath, maxCharacters));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public RuntimeLogTailResult Build(RuntimeLogTailRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);

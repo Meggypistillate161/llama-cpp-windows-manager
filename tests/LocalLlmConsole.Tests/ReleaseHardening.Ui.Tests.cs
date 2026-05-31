@@ -44,6 +44,7 @@ public sealed partial class ReleaseHardeningTests
         var iconPath = FindRepositoryFile("src", "LocalLlmConsole.App", "Assets", "AppIcon.ico");
 
         Assert.Contains("Title=\"llama.cpp Windows Manager v1.1.3\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"v1.1.3\"", xaml, StringComparison.Ordinal);
         Assert.Contains("AppDisplayName = \"llama.cpp Windows Manager\"", source, StringComparison.Ordinal);
         Assert.Contains("AppVersionLabel = \"v1.1.3\"", source, StringComparison.Ordinal);
         Assert.Contains("<AssemblyName>LlamaCppWindowsManager</AssemblyName>", project, StringComparison.Ordinal);
@@ -313,6 +314,11 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("x:Key=\"MetricCard\"", appXaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{Binding Content, RelativeSource={RelativeSource TemplatedParent}}\"", appXaml, StringComparison.Ordinal);
         Assert.Contains("TextWrapping=\"Wrap\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"DropDownPickerButton\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("ControlTemplate TargetType=\"Button\"", appXaml, StringComparison.Ordinal);
+        Assert.Contains("<Setter Property=\"MinHeight\" Value=\"29\"/>", appXaml, StringComparison.Ordinal);
+        Assert.Contains("<Setter Property=\"Margin\" Value=\"0\"/>", appXaml, StringComparison.Ordinal);
+        Assert.Contains("Data=\"M 0 0 L 4 4 L 8 0 Z\"", appXaml, StringComparison.Ordinal);
         Assert.Contains("<Style TargetType=\"ContextMenu\">", appXaml, StringComparison.Ordinal);
         Assert.Contains("<Style TargetType=\"MenuItem\">", appXaml, StringComparison.Ordinal);
         Assert.Contains("Property=\"HasDropShadow\" Value=\"False\"", appXaml, StringComparison.Ordinal);
@@ -329,16 +335,24 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("var valueRows = new Grid { MinHeight = 34, Tag = label }", metricFactory, StringComparison.Ordinal);
         Assert.Contains("header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto })", metricFactory, StringComparison.Ordinal);
         Assert.Contains("MetricCardFactory.SetMetricText(target, value, emphasizeLoadedStatus)", source, StringComparison.Ordinal);
-        Assert.Contains("generationRate = MetricCardFactory.AddMetric(runtimeDashboard, \"Tokens (Live)\", 1, 0, out generationRateLastKnown)", overviewFactory, StringComparison.Ordinal);
-        Assert.Contains("totalTokens = MetricCardFactory.AddMetric(runtimeDashboard, \"Tokens (Total)\", 1, 1)", overviewFactory, StringComparison.Ordinal);
-        Assert.Contains("SetLastKnownMetricText(_runtimeDashboardPage.GenerationRateLastKnown", source, StringComparison.Ordinal);
-        Assert.Contains("ClearLastKnownMetricText(_runtimeDashboardPage.GenerationRateLastKnown)", source, StringComparison.Ordinal);
+        Assert.Contains("gpu = MetricCardFactory.AddMetric(runtimeDashboard, \"GPU\", 0, 1)", overviewFactory, StringComparison.Ordinal);
+        Assert.Contains("tokens = MetricCardFactory.AddMetric(runtimeDashboard, \"Tokens\", 1, 0, out tokensLastKnown)", overviewFactory, StringComparison.Ordinal);
+        Assert.Contains("mtpTokens = MetricCardFactory.AddMetric(runtimeDashboard, \"MTP tokens\", 1, 1)", overviewFactory, StringComparison.Ordinal);
+        Assert.Contains("slots = MetricCardFactory.AddMetric(runtimeDashboard, \"Slots\", 1, 2)", overviewFactory, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Tokens (Live)\"", overviewFactory, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Tokens (Total)\"", overviewFactory, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Runtime build\", 0, 1", overviewFactory, StringComparison.Ordinal);
+        Assert.Contains("SetLastKnownMetricText(_runtimeDashboardPage.TokensLastKnown", source, StringComparison.Ordinal);
+        Assert.Contains("ClearLastKnownMetricText(_runtimeDashboardPage.TokensLastKnown)", source, StringComparison.Ordinal);
+        Assert.Contains("SetMetricText(_runtimeDashboardPage.TokensMetric, summary.Tokens)", source, StringComparison.Ordinal);
+        Assert.Contains("SetMetricText(_runtimeDashboardPage.MtpTokensMetric, summary.MtpTokens)", source, StringComparison.Ordinal);
+        Assert.Contains("SetMetricText(_runtimeDashboardPage.SlotsMetric, summary.Slots)", source, StringComparison.Ordinal);
+        Assert.Contains("_sessions.SelectedSnapshot()?.LogPath", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_runtimeDashboardTotalTokensLastKnown", source, StringComparison.Ordinal);
         Assert.Contains("string.Equals(label, \"Model status\", StringComparison.Ordinal)", metricFactory, StringComparison.Ordinal);
-        Assert.Contains("string.Equals(label, \"Runtime build\", StringComparison.Ordinal)", metricFactory, StringComparison.Ordinal);
         Assert.Contains("\"Loaded:\"", metricFactory, StringComparison.Ordinal);
         Assert.Contains("\"Loading\"", metricFactory, StringComparison.Ordinal);
-        Assert.Contains("SetMetricText(_runtimeDashboardPage.RuntimeMetric, runtimeName, emphasizeLoadedStatus)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetMetricText(_runtimeDashboardPage.RuntimeMetric", source, StringComparison.Ordinal);
         Assert.Contains("string.Equals(normalized, \"None\", StringComparison.OrdinalIgnoreCase)", metricFactory, StringComparison.Ordinal);
         Assert.Contains("string.Equals(normalized, \"Stopped\", StringComparison.OrdinalIgnoreCase)", metricFactory, StringComparison.Ordinal);
         Assert.DoesNotContain("text.StartsWith(\"Loading \", StringComparison.OrdinalIgnoreCase)", metricFactory, StringComparison.Ordinal);
@@ -408,6 +422,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.DoesNotContain("GridSection(\"Loaded Model Sessions\"", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_runtimeDashboardModel", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_runtimeDashboardGenerationRateLastKnown", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_runtimeDashboardTokensLastKnown", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_runtimeMetricsGrid", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_overviewRuntimeLogBox", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_overviewModelCombo", source, StringComparison.Ordinal);
@@ -842,6 +857,7 @@ public sealed partial class ReleaseHardeningTests
 
         Assert.Contains("new(\"Network\", \"API key\", \"modelApiKey\", settings.ModelApiKey, \"secret\", Action: \"Generate\",", settingsDefinitions, StringComparison.Ordinal);
         Assert.Contains("Bearer key required by local OpenAI-compatible endpoints", settingsDefinitions, StringComparison.Ordinal);
+        Assert.Contains("OpenCode sync copies this key into OpenCode provider config in plain text", settingsDefinitions, StringComparison.Ordinal);
         Assert.Contains("SettingsGridColumnFactory.ActionsColumn", settingsFactory, StringComparison.Ordinal);
         Assert.DoesNotContain("FrameworkElementFactory", settings, StringComparison.Ordinal);
         Assert.DoesNotContain("Header = \"Secret\"", settings, StringComparison.Ordinal);
@@ -954,6 +970,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("runtime-name\\\\bin\\\\llama-server.exe", helpContent, StringComparison.Ordinal);
         Assert.Contains("local-llm-runtime.json is optional", helpContent, StringComparison.Ordinal);
         Assert.Contains("skips symlinks and junctions", helpContent, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"D:\LLM", helpContent, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Vision needs a model/runtime combination that can process images", helpContent, StringComparison.Ordinal);
         Assert.Contains("Whole number from 1 to 65535", helpContent, StringComparison.Ordinal);
         Assert.Contains("NavigateFromHelp", source, StringComparison.Ordinal);

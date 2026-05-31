@@ -48,8 +48,9 @@ public sealed class RuntimeTelemetryApplicationService
         IReadOnlyList<PrometheusSample> samples,
         AppSettings metricsSettings,
         RuntimeSlotSnapshot? slotSnapshot,
+        RuntimeMtpTokenSnapshot? mtpTokenSnapshot,
         DateTimeOffset? capturedAt = null)
-        => _metricSummaries.Apply(runtimeKey, samples, metricsSettings, slotSnapshot, capturedAt);
+        => _metricSummaries.Apply(runtimeKey, samples, metricsSettings, slotSnapshot, mtpTokenSnapshot, capturedAt);
 
     public IReadOnlyList<PrometheusSample> LastKnownSamples(string runtimeKey)
         => _metricSummaries.LastKnownSamples(runtimeKey);

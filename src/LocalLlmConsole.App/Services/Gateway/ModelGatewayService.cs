@@ -40,6 +40,8 @@ public sealed class ModelGatewayService : IModelGatewayHost
             throw new InvalidOperationException("Gateway port must be between 1 and 65535.");
         if (string.IsNullOrWhiteSpace(_options.ApiKey) || !ApiSecurity.IsStrongBearerSecret(_options.ApiKey))
             throw new InvalidOperationException("The model gateway requires a strong API key.");
+        if (_options.MaxRequestBodyBytes <= 0)
+            throw new InvalidOperationException("Gateway request body limit must be greater than zero.");
 
         _listener.Start();
         _loop = Task.Run(() => ListenAsync(_stop.Token), cancellationToken);
@@ -175,7 +177,17 @@ public sealed class ModelGatewayService : IModelGatewayHost
 
     private async Task ProxyModelRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        var body = await ReadBodyAsync(context.Request, cancellationToken);
+        byte[] body;
+        try
+        {
+            body = await ReadBodyAsync(context.Request, _options.MaxRequestBodyBytes, cancellationToken);
+        }
+        catch (ModelGatewayRequestBodyTooLargeException ex)
+        {
+            await ModelGatewayResponseWriter.WriteJsonAsync(context, 413, new { error = new { message = ex.Message, type = "request_too_large" } }, cancellationToken);
+            return;
+        }
+
         var requestedModel = ModelGatewayRequestResolver.ExtractRequestedModel(body);
         if (string.IsNullOrWhiteSpace(requestedModel))
         {
@@ -236,17 +248,8 @@ public sealed class ModelGatewayService : IModelGatewayHost
         }
     }
 
-    private static byte[] ReadBodyBuffer(Stream stream, long contentLength)
-    {
-        using var memory = contentLength is > 0 and <= int.MaxValue
-            ? new MemoryStream((int)contentLength)
-            : new MemoryStream();
-        stream.CopyTo(memory);
-        return memory.ToArray();
-    }
-
-    private static Task<byte[]> ReadBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken)
-        => Task.Run(() => ReadBodyBuffer(request.InputStream, request.ContentLength64), cancellationToken);
+    private static Task<byte[]> ReadBodyAsync(HttpListenerRequest request, long maxRequestBodyBytes, CancellationToken cancellationToken)
+        => Task.Run(() => ModelGatewayRequestBodyReader.ReadBodyBuffer(request.InputStream, request.ContentLength64, maxRequestBodyBytes), cancellationToken);
 
     public async ValueTask DisposeAsync()
     {

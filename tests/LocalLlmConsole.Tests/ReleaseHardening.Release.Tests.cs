@@ -30,6 +30,10 @@ public sealed partial class ReleaseHardeningTests
         var startScript = File.ReadAllText(FindRepositoryFile("start-app.ps1"));
         var architecture = File.ReadAllText(FindRepositoryFile("docs", "ARCHITECTURE.md"));
         var license = File.ReadAllText(FindRepositoryFile("LICENSE"));
+        var publicDocs = string.Join(
+            "\n",
+            Directory.EnumerateFiles(Path.GetDirectoryName(FindRepositoryFile("docs", "ARCHITECTURE.md"))!, "*.md", SearchOption.TopDirectoryOnly)
+                .Select(File.ReadAllText));
 
         Assert.StartsWith("# llama.cpp Windows Manager", readme, StringComparison.Ordinal);
         Assert.Contains("unofficial community project", readme, StringComparison.OrdinalIgnoreCase);
@@ -53,6 +57,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.DoesNotContain("Local LLM Console", buildScript, StringComparison.Ordinal);
         Assert.DoesNotContain("Local LLM Console", publishScript, StringComparison.Ordinal);
         Assert.DoesNotContain("Local LLM Console", startScript, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"D:\LLM", publicDocs, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(@"C:\Users\ageor", publicDocs, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -69,6 +75,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("windows-latest", workflow, StringComparison.Ordinal);
         Assert.Contains(".\\build-app.ps1 -Restore", workflow, StringComparison.Ordinal);
         Assert.Contains(".\\test-app.ps1", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet format LocalLlmConsole.sln --verify-no-changes --verbosity minimal", workflow, StringComparison.Ordinal);
+        Assert.Contains("git diff --check", workflow, StringComparison.Ordinal);
         Assert.Contains(".\\test-vulnerabilities.ps1", workflow, StringComparison.Ordinal);
         Assert.Contains("checksum was not produced", workflow, StringComparison.Ordinal);
         Assert.Contains("package --vulnerable --include-transitive --format json", File.ReadAllText(FindRepositoryFile("test-vulnerabilities.ps1")), StringComparison.Ordinal);
@@ -113,6 +121,31 @@ public sealed partial class ReleaseHardeningTests
         Assert.True(
             buildInstaller.IndexOf("Assert-SignedIfRequired $PublishedExe", StringComparison.Ordinal)
             < buildInstaller.IndexOf("& $Iscc @isccArgs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReleaseScriptsCanRequireCleanGitTree()
+    {
+        var releaseGate = File.ReadAllText(FindRepositoryFile("test-release-gate.ps1"));
+        var publishScript = File.ReadAllText(FindRepositoryFile("publish-app.ps1"));
+        var buildInstaller = File.ReadAllText(FindRepositoryFile("build-installer.ps1"));
+        var development = File.ReadAllText(FindRepositoryFile("docs", "DEVELOPMENT.md"));
+        var releaseReadiness = File.ReadAllText(FindRepositoryFile("docs", "RELEASE_READINESS.md"));
+
+        foreach (var script in new[] { releaseGate, publishScript, buildInstaller })
+        {
+            Assert.Contains("[switch] $RequireCleanTree", script, StringComparison.Ordinal);
+            Assert.Contains("function Assert-CleanGitTree", script, StringComparison.Ordinal);
+            Assert.Contains("status --porcelain --untracked-files=all", script, StringComparison.Ordinal);
+            Assert.Contains("Release requires a clean Git worktree", script, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("Verify clean Git worktree", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("$publishArgs += \"-RequireCleanTree\"", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("$installerArgs += \"-RequireCleanTree\"", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("$publishArgs.RequireCleanTree = $true", buildInstaller, StringComparison.Ordinal);
+        Assert.Contains("-RequireCleanTree", development, StringComparison.Ordinal);
+        Assert.Contains("git status --porcelain --untracked-files=all", releaseReadiness, StringComparison.Ordinal);
     }
 
 
@@ -550,6 +583,53 @@ public sealed partial class ReleaseHardeningTests
     }
 
     [Fact]
+    public async Task AppUpdateServiceRejectsUpdateArchiveTraversal()
+    {
+        var temp = CreateTempRoot();
+        var escapeName = $"llama-update-escape-{Guid.NewGuid():N}.txt";
+        var archiveBytes = CreateZipBytes(
+            (AppUpdateService.PortableExeName, Enumerable.Repeat((byte)7, 1024 * 1024).ToArray()),
+            ("../" + escapeName, [1, 2, 3]));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(archiveBytes)).ToLowerInvariant();
+        using var handler = new CapturingHttpHandler(request =>
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+            response.Content = new ByteArrayContent(request.RequestUri?.AbsolutePath.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase) == true
+                ? System.Text.Encoding.UTF8.GetBytes($"{hash}  LlamaCppWindowsManager-win-x64.zip")
+                : archiveBytes);
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var service = CreateAppUpdateService(http);
+        var update = new AppUpdateInfo(
+            true,
+            "v1.0",
+            "v1.1.2",
+            "v1.1.2",
+            "",
+            "https://example.invalid/release",
+            "LlamaCppWindowsManager-win-x64.zip",
+            "https://example.invalid/LlamaCppWindowsManager-win-x64.zip",
+            archiveBytes.Length,
+            "LlamaCppWindowsManager-win-x64.zip.sha256",
+            "https://example.invalid/LlamaCppWindowsManager-win-x64.zip.sha256");
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.StageInstallAsync(update, temp, Path.Combine(temp, AppUpdateService.PortableExeName), TestContext.Current.CancellationToken));
+
+            Assert.Contains("unsafe path", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(Path.Combine(Path.GetTempPath(), escapeName)));
+            Assert.False(File.Exists(Path.Combine(temp, escapeName)));
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task AppUpdateServiceCanUpdateLegacyExecutableNameInPlace()
     {
         var temp = CreateTempRoot();
@@ -591,6 +671,20 @@ public sealed partial class ReleaseHardeningTests
 
     private static AppUpdateService CreateAppUpdateService(HttpClient http)
         => new(http, _ => { });
+
+    private static byte[] CreateZipBytes(params (string EntryName, byte[] Bytes)[] entries)
+    {
+        using var memory = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(memory, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var entry in entries)
+            {
+                using var stream = zip.CreateEntry(entry.EntryName).Open();
+                stream.Write(entry.Bytes);
+            }
+        }
+        return memory.ToArray();
+    }
 
     private sealed class CapturingHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {

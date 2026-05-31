@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using Microsoft.Data.Sqlite;
@@ -169,6 +170,128 @@ public sealed partial class ReleaseHardeningTests
         Assert.False(Directory.Exists(Path.Combine(destination, "cudart-llama-bin-win-cuda-12.4-x64")));
     }
 
+    [Fact]
+    public void RuntimePackageInstallFileServiceRejectsArchiveTraversal()
+    {
+        var root = CreateTempRoot();
+        var archive = Path.Combine(root, "runtime.zip");
+        var destination = Path.Combine(root, "runtime");
+        var escapeName = $"llama-runtime-escape-{Guid.NewGuid():N}.txt";
+        using (var zip = System.IO.Compression.ZipFile.Open(archive, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            using (var safe = zip.CreateEntry("bin/llama-server.exe").Open())
+            {
+                safe.WriteByte(1);
+            }
+
+            using (var unsafeEntry = zip.CreateEntry("../" + escapeName).Open())
+            {
+                unsafeEntry.WriteByte(2);
+            }
+        }
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.ExtractArchive(archive, destination));
+
+        Assert.Contains("unsafe path", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(Path.GetTempPath(), escapeName)));
+        Assert.False(File.Exists(Path.Combine(root, escapeName)));
+    }
+
+    [Fact]
+    public void RuntimePackageInstallFileServiceRejectsTarGzipTraversalAndUnsafeLinks()
+    {
+        var root = CreateTempRoot();
+        var destination = Path.Combine(root, "runtime");
+        var escapeName = $"llama-runtime-escape-{Guid.NewGuid():N}.txt";
+        var traversalArchive = Path.Combine(root, "runtime-traversal.tar.gz");
+        CreateTarGzipArchive(
+            traversalArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "bin/llama-server")
+            {
+                DataStream = new MemoryStream([1])
+            },
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "../" + escapeName)
+            {
+                DataStream = new MemoryStream([2])
+            });
+
+        var traversal = Assert.Throws<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.ExtractArchive(traversalArchive, destination));
+
+        Assert.Contains("unsafe path", traversal.Message, StringComparison.OrdinalIgnoreCase);
+
+        var linkArchive = Path.Combine(root, "runtime-link.tar.gz");
+        CreateTarGzipArchive(
+            linkArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.SymbolicLink, "bin/outside")
+            {
+                LinkName = "../../" + escapeName
+            });
+
+        var link = Assert.Throws<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.ExtractArchive(linkArchive, destination));
+
+        Assert.Contains("outside", link.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(Path.GetTempPath(), escapeName)));
+        Assert.False(File.Exists(Path.Combine(root, escapeName)));
+    }
+
+    [Fact]
+    public async Task RuntimePackageInstallFileServiceVerifiesRuntimePackageSizeAndChecksum()
+    {
+        var root = CreateTempRoot();
+        var bytes = Encoding.UTF8.GetBytes("verified runtime archive");
+        var sha256 = Sha256Hex(bytes);
+        using var handler = new CapturingHttpHandler(request =>
+        {
+            var uri = request.RequestUri?.ToString();
+            if (uri == "https://example.com/runtime.zip")
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            if (uri == "https://example.com/runtime.zip.sha256")
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent($"{sha256}  runtime.zip") };
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+        using var http = new HttpClient(handler);
+        var verifiedPath = Path.Combine(root, "verified.zip");
+        var mismatchPath = Path.Combine(root, "checksum-mismatch.zip");
+        var sizeMismatchPath = Path.Combine(root, "size-mismatch.zip");
+        var missingChecksumPath = Path.Combine(root, "missing-checksum.zip");
+
+        await RuntimePackageInstallFileService.DownloadAssetAsync(
+            http,
+            new RuntimePackageAsset("runtime.zip", "https://example.com/runtime.zip", bytes.Length, ChecksumUrl: "https://example.com/runtime.zip.sha256"),
+            verifiedPath,
+            TestContext.Current.CancellationToken);
+
+        var checksumMismatch = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.DownloadAssetAsync(
+                http,
+                new RuntimePackageAsset("runtime.zip", "https://example.com/runtime.zip", bytes.Length, Sha256: new string('a', 64)),
+                mismatchPath,
+                TestContext.Current.CancellationToken));
+        var sizeMismatch = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.DownloadAssetAsync(
+                http,
+                new RuntimePackageAsset("runtime.zip", "https://example.com/runtime.zip", bytes.Length + 1, Sha256: sha256),
+                sizeMismatchPath,
+                TestContext.Current.CancellationToken));
+        var missingChecksum = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RuntimePackageInstallFileService.DownloadAssetAsync(
+                http,
+                new RuntimePackageAsset("runtime.zip", "https://example.com/runtime.zip", bytes.Length),
+                missingChecksumPath,
+                TestContext.Current.CancellationToken));
+
+        Assert.True(File.Exists(verifiedPath));
+        Assert.Contains("checksum mismatch", checksumMismatch.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("size mismatch", sizeMismatch.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("missing SHA-256", missingChecksum.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(mismatchPath));
+        Assert.False(File.Exists(sizeMismatchPath));
+        Assert.False(File.Exists(missingChecksumPath));
+    }
+
 
     [Fact]
     public async Task RuntimePackageInstallServiceDownloadsExtractsStampsAndRegistersRuntime()
@@ -180,6 +303,7 @@ public sealed partial class ReleaseHardeningTests
         await File.WriteAllTextAsync(Path.Combine(source, "llama-server.exe"), "fake server", TestContext.Current.CancellationToken);
         System.IO.Compression.ZipFile.CreateFromDirectory(Path.Combine(root, "package-source"), archive);
         var archiveBytes = await File.ReadAllBytesAsync(archive, TestContext.Current.CancellationToken);
+        var archiveSha256 = Sha256Hex(archiveBytes);
         var releaseJson = $$"""
         {
           "tag_name": "b9354",
@@ -190,7 +314,8 @@ public sealed partial class ReleaseHardeningTests
             {
               "name": "llama-b9354-bin-win-cpu-x64.zip",
               "browser_download_url": "https://example.com/win-cpu.zip",
-              "size": {{archiveBytes.Length}}
+              "size": {{archiveBytes.Length}},
+              "digest": "sha256:{{archiveSha256}}"
             }
           ]
         }
@@ -246,6 +371,7 @@ public sealed partial class ReleaseHardeningTests
     {
         var root = CreateTempRoot();
         var badArchiveBytes = System.Text.Encoding.UTF8.GetBytes("not a zip");
+        var badArchiveSha256 = Sha256Hex(badArchiveBytes);
         var releaseJson = $$"""
         {
           "tag_name": "b9354",
@@ -256,7 +382,8 @@ public sealed partial class ReleaseHardeningTests
             {
               "name": "llama-b9354-bin-win-cpu-x64.zip",
               "browser_download_url": "https://example.com/win-cpu.zip",
-              "size": {{badArchiveBytes.Length}}
+              "size": {{badArchiveBytes.Length}},
+              "digest": "sha256:{{badArchiveSha256}}"
             }
           ]
         }
@@ -344,6 +471,7 @@ public sealed partial class ReleaseHardeningTests
         await File.WriteAllTextAsync(Path.Combine(source, "llama-server.exe"), "fake server", TestContext.Current.CancellationToken);
         System.IO.Compression.ZipFile.CreateFromDirectory(Path.Combine(root, "package-source"), archive);
         var archiveBytes = await File.ReadAllBytesAsync(archive, TestContext.Current.CancellationToken);
+        var archiveSha256 = Sha256Hex(archiveBytes);
         var releaseJson = $$"""
         {
           "tag_name": "b9354",
@@ -354,7 +482,8 @@ public sealed partial class ReleaseHardeningTests
             {
               "name": "llama-b9354-bin-win-cpu-x64.zip",
               "browser_download_url": "https://example.com/win-cpu.zip",
-              "size": {{archiveBytes.Length}}
+              "size": {{archiveBytes.Length}},
+              "digest": "sha256:{{archiveSha256}}"
             }
           ]
         }
@@ -416,6 +545,12 @@ public sealed partial class ReleaseHardeningTests
         var archivePath = Path.Combine(root, "cache", "llama's.tar.gz");
         var installDir = Path.Combine(root, "runtimes", "llama install");
         var executable = Path.Combine(installDir, "bin", "llama-server");
+        CreateTarGzipArchive(
+            archivePath,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "bin/llama-server")
+            {
+                DataStream = new MemoryStream([1])
+            });
         var runner = new ScriptedProcessRunner(_ => new ProcessRunResult(0, "ok", ""));
         var service = new RuntimePackageWslFileService(runner, () => "wsl.exe");
 
@@ -455,11 +590,87 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("ok", log, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RuntimePackageWslFileServiceRejectsUnsafeTarArchivesBeforeRunningWsl()
+    {
+        var root = CreateTempRoot();
+        var logPath = Path.Combine(root, "logs", "package-wsl.log");
+        var installDir = Path.Combine(root, "runtime");
+        var runner = new ScriptedProcessRunner(_ => new ProcessRunResult(0, "should not run", ""));
+        var service = new RuntimePackageWslFileService(runner, () => "wsl.exe");
+        var escapeName = $"llama-runtime-escape-{Guid.NewGuid():N}.txt";
+
+        var traversalArchive = Path.Combine(root, "cache", "runtime-traversal.tar.gz");
+        CreateTarGzipArchive(
+            traversalArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "bin/llama-server")
+            {
+                DataStream = new MemoryStream([1])
+            },
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "../" + escapeName)
+            {
+                DataStream = new MemoryStream([2])
+            });
+
+        var traversal = await AssertRejectsArchiveAsync(traversalArchive);
+        Assert.Contains("unsafe path", traversal.Message, StringComparison.OrdinalIgnoreCase);
+
+        var symlinkArchive = Path.Combine(root, "cache", "runtime-symlink.tar.gz");
+        CreateTarGzipArchive(
+            symlinkArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.SymbolicLink, "bin/outside")
+            {
+                LinkName = "../../" + escapeName
+            });
+
+        var symlink = await AssertRejectsArchiveAsync(symlinkArchive);
+        Assert.Contains("outside", symlink.Message, StringComparison.OrdinalIgnoreCase);
+
+        var hardlinkArchive = Path.Combine(root, "cache", "runtime-hardlink.tar.gz");
+        CreateTarGzipArchive(
+            hardlinkArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.HardLink, "bin/outside-hardlink")
+            {
+                LinkName = "../" + escapeName
+            });
+
+        var hardlink = await AssertRejectsArchiveAsync(hardlinkArchive);
+        Assert.Contains("outside", hardlink.Message, StringComparison.OrdinalIgnoreCase);
+
+        var fifoArchive = Path.Combine(root, "cache", "runtime-fifo.tar.gz");
+        CreateTarGzipArchive(
+            fifoArchive,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.Fifo, "bin/runtime-pipe"));
+
+        var fifo = await AssertRejectsArchiveAsync(fifoArchive);
+        Assert.Contains("unsupported tar entry type", fifo.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Empty(runner.Commands);
+        Assert.False(File.Exists(Path.Combine(root, escapeName)));
+
+        Task<InvalidOperationException> AssertRejectsArchiveAsync(string archivePath)
+            => Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.ExtractArchiveAsync(new RuntimePackageWslArchiveRequest(
+                    "Ubuntu-24.04",
+                    archivePath,
+                    installDir,
+                    logPath,
+                    BoundedLogFile.MegabytesToBytes(1),
+                    TestContext.Current.CancellationToken)));
+    }
+
 
     [Fact]
     public async Task RuntimePackageWslFileServiceReportsArchiveFailuresAndChmodWarnings()
     {
         var root = CreateTempRoot();
+        var archivePath = Path.Combine(root, "cache", "runtime.tar.gz");
+        CreateTarGzipArchive(
+            archivePath,
+            new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "bin/llama-server")
+            {
+                DataStream = new MemoryStream([1])
+            });
         var archiveFailure = new RuntimePackageWslFileService(
             new ScriptedProcessRunner(_ => new ProcessRunResult(2, "", "tar failed")),
             () => "wsl.exe");
@@ -467,7 +678,7 @@ public sealed partial class ReleaseHardeningTests
         var archive = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             archiveFailure.ExtractArchiveAsync(new RuntimePackageWslArchiveRequest(
                 "Ubuntu-24.04",
-                Path.Combine(root, "cache", "runtime.tar.gz"),
+                archivePath,
                 Path.Combine(root, "runtime"),
                 Path.Combine(root, "logs", "archive.log"),
                 BoundedLogFile.MegabytesToBytes(1),
@@ -968,5 +1179,27 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("Built from source", RuntimePackageInventoryPresenter.LocalStatusLabel([], sourceBuilds));
         Assert.Equal("source:9777256c3130", RuntimePackageInventoryPresenter.LocalIdentity([], sourceBuilds));
         Assert.Contains("source built", RuntimePackageInventoryPresenter.LatestLocalLabel([], sourceBuilds, null), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Sha256Hex(byte[] bytes)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
+    private static void CreateTarGzipArchive(string archivePath, params System.Formats.Tar.TarEntry[] entries)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(archivePath) ?? ".");
+        using var file = File.Create(archivePath);
+        using var gzip = new System.IO.Compression.GZipStream(file, System.IO.Compression.CompressionLevel.SmallestSize);
+        using var writer = new System.Formats.Tar.TarWriter(gzip, leaveOpen: false);
+        foreach (var entry in entries)
+        {
+            try
+            {
+                writer.WriteEntry(entry);
+            }
+            finally
+            {
+                entry.DataStream?.Dispose();
+            }
+        }
     }
 }

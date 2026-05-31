@@ -54,6 +54,7 @@ public sealed class RuntimePackageWslFileService
     public async Task ExtractArchiveAsync(RuntimePackageWslArchiveRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArchiveSafetyService.ValidateTarGzipArchiveEntries(request.ArchivePath, request.InstallDir);
 
         var installDir = CommandLineService.BashQuote(WindowsPathToWslPath(request.InstallDir));
         var archivePath = CommandLineService.BashQuote(WindowsPathToWslPath(request.ArchivePath));

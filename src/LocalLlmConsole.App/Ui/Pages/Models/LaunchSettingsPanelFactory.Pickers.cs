@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using WpfApplication = System.Windows.Application;
 using WpfButton = System.Windows.Controls.Button;
 using WpfTextBox = System.Windows.Controls.TextBox;
 
@@ -17,16 +19,7 @@ public static partial class LaunchSettingsPanelFactory
         grid.Children.Add(textBox);
 
         WpfButton? pickerButton = null;
-        pickerButton = Button(VisionProjectorSelection.DisplayText(textBox.Text), () =>
-        {
-            if (pickerButton?.ContextMenu is not null)
-            {
-                pickerButton.ContextMenu.PlacementTarget = pickerButton;
-                pickerButton.ContextMenu.IsOpen = true;
-            }
-
-            return Task.CompletedTask;
-        });
+        pickerButton = DropDownPickerButton(VisionProjectorSelection.DisplayText(textBox.Text), () => OpenPickerMenu(pickerButton));
         var finalButton = pickerButton;
         finalButton.MinWidth = 156;
         finalButton.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
@@ -41,7 +34,7 @@ public static partial class LaunchSettingsPanelFactory
 
     private static ContextMenu VisionProjectorMenu(WpfTextBox textBox, Func<Task> chooseAsync)
     {
-        var menu = new ContextMenu();
+        var menu = PickerContextMenu();
         var auto = new MenuItem { Header = "Auto-detect nearby head" };
         auto.Click += (_, _) => textBox.Text = "";
         var embedded = new MenuItem { Header = "Embedded / model-bundled" };
@@ -72,16 +65,7 @@ public static partial class LaunchSettingsPanelFactory
         grid.Children.Add(textBox);
 
         WpfButton? pickerButton = null;
-        pickerButton = Button(MtpHeadButtonText(textBox.Text), () =>
-        {
-            if (pickerButton?.ContextMenu is not null)
-            {
-                pickerButton.ContextMenu.PlacementTarget = pickerButton;
-                pickerButton.ContextMenu.IsOpen = true;
-            }
-
-            return Task.CompletedTask;
-        });
+        pickerButton = DropDownPickerButton(MtpHeadButtonText(textBox.Text), () => OpenPickerMenu(pickerButton));
         var finalButton = pickerButton;
         finalButton.MinWidth = 156;
         finalButton.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
@@ -96,7 +80,7 @@ public static partial class LaunchSettingsPanelFactory
 
     private static ContextMenu MtpHeadMenu(WpfTextBox textBox, Func<Task> chooseAsync)
     {
-        var menu = new ContextMenu();
+        var menu = PickerContextMenu();
         var auto = new MenuItem { Header = "Auto-detect nearby MTP head" };
         auto.Click += (_, _) => textBox.Text = "";
         var choose = new MenuItem { Header = "Choose GGUF file..." };
@@ -129,4 +113,26 @@ public static partial class LaunchSettingsPanelFactory
             ? "Auto-detect a nearby MTP assistant/head GGUF when Spec type is atomic-mtp."
             : $"MTP head: {trimmed}{Environment.NewLine}Click to change the MTP head source.";
     }
+
+    private static WpfButton DropDownPickerButton(string text, Func<Task> click)
+    {
+        var button = Button(text, click);
+        button.Style = (Style)WpfApplication.Current.Resources["DropDownPickerButton"];
+        return button;
+    }
+
+    private static Task OpenPickerMenu(WpfButton? button)
+    {
+        if (button?.ContextMenu is not { } menu) return Task.CompletedTask;
+
+        menu.PlacementTarget = button;
+        menu.Placement = PlacementMode.Bottom;
+        if (button.ActualWidth > 0)
+            menu.Width = button.ActualWidth;
+        menu.IsOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private static ContextMenu PickerContextMenu()
+        => new() { Placement = PlacementMode.Bottom };
 }

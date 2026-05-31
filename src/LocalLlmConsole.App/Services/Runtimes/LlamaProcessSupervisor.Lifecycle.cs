@@ -14,7 +14,9 @@ public sealed partial class LlamaProcessSupervisor
             _wslRuntimeStop.Stop(new WslRuntimeStopRequest(
                 _lastSettings,
                 _lastRuntimeExecutablePath,
-                _lastWslProcessMarker));
+                _lastWslProcessMarker,
+                LogPath,
+                BoundedLogFile.MegabytesToBytes(_lastSettings.MaxLogFileSizeMb)));
         }
 
         try { _process?.Dispose(); } catch { }

@@ -97,6 +97,7 @@ public static class HelpContentFactory
             ("Loaded Model Sessions", "Every running model appears here. Click a model row to switch Model Status to that model. The gateway row shows shared routing status when Overview refreshes."),
             ("Gateway endpoint", "The shared /v1 address used by auto-load clients. It can route a request to whichever configured model was requested."),
             ("Direct endpoint", "The normal per-model llama.cpp address. It stays available on the model's saved port while that model is loaded."),
+            ("Runtime metrics", "Tokens and MTP Tokens use two rows: live rate by stream, average rate when recent data exists, and total tokens. Slots shows active/queued requests and busy decode slots."),
             ("Model status", "Loading, warm, loaded, stopped, or failed. If a model stalls, inspect the runtime log below the metrics."));
         AddHelpBullets(panel,
             "The gateway row shows the shared router endpoint, policy, LAN exposure, and how many direct model sessions are currently loaded.",
@@ -149,7 +150,7 @@ public static class HelpContentFactory
 
         AddHelpArticle(panel, "Adding runtimes manually", "A manual runtime is just a folder that contains llama-server or llama-server.exe. Put the folder under the app runtimes folder, or choose/register that folder if you keep runtimes elsewhere.");
         AddHelpDefinitionList(panel,
-            ("Default runtime root", "The app default is <workspace>\\runtimes. In this workspace that is D:\\LLM\\LocalLlmConsole\\runtimes."),
+            ("Default runtime root", "The app default is <workspace>\\runtimes."),
             ("Windows layout", "Use runtime-name\\llama-server.exe or runtime-name\\bin\\llama-server.exe."),
             ("WSL/Linux layout", "Use runtime-name\\llama-server or runtime-name\\bin\\llama-server."),
             ("Libraries", "Keep companion DLLs, shared libraries, and lib folders beside the executable exactly as the runtime package provides them."),

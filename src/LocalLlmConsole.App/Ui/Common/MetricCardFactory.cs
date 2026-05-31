@@ -12,7 +12,7 @@ namespace LocalLlmConsole;
 public static class MetricCardFactory
 {
     private static readonly Regex MetricImportantValuePattern = new(
-        @"\d[\d,]*(?:\.\d+)?(?:/\d[\d,]*(?:\.\d+)?)?\s*(?:t/s|/s|avg|%|C|GiB|GB|MiB|tokens?)?",
+        @"\d[\d,]*(?:\.\d+)?(?:/\d[\d,]*(?:\.\d+)?)?\s*(?:t/s|/s|avg|%|C|GiB|GB|MiB|tokens?|t)?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly System.Windows.Media.FontFamily MetricValueFont = new("Cascadia Mono, Consolas, Segoe UI");
 
@@ -178,7 +178,7 @@ public static class MetricCardFactory
         if (colon > 0 && colon < 16)
             return (text[..colon].Trim(), text[(colon + 1)..].Trim());
 
-        foreach (var label in new[] { "KV cache", "Context", "Prompt", "Gen" })
+        foreach (var label in new[] { "KV cache", "Context", "Accepted", "Prompt", "Micro", "Batch", "Cont", "Gen" })
         {
             if (text.StartsWith(label + " ", StringComparison.Ordinal))
                 return (label, text[label.Length..].Trim());
@@ -236,15 +236,6 @@ public static class MetricCardFactory
             return true;
         }
 
-        if (string.Equals(label, "Runtime build", StringComparison.Ordinal))
-        {
-            var runtimeBlock = emphasizeLoadedStatus && !LooksLikeEndpoint(text)
-                ? MetricStatusNameBlock("", text)
-                : MetricPlainValueBlock(text, compact: false);
-            AddSpanningMetricBlock(target, runtimeBlock, row);
-            return true;
-        }
-
         return false;
     }
 
@@ -255,12 +246,6 @@ public static class MetricCardFactory
         Grid.SetColumnSpan(block, 2);
         target.Children.Add(block);
     }
-
-    private static bool LooksLikeEndpoint(string text)
-        => text.Contains("://", StringComparison.Ordinal)
-           || text.StartsWith("localhost:", StringComparison.OrdinalIgnoreCase)
-           || text.StartsWith("127.0.0.1:", StringComparison.OrdinalIgnoreCase)
-           || text.StartsWith("0.0.0.0:", StringComparison.OrdinalIgnoreCase);
 
     private static bool TrySplitModelStatusName(string text, out string statusPrefix, out string modelName)
     {
@@ -283,8 +268,7 @@ public static class MetricCardFactory
     }
 
     private static bool IsStatusNameMetricLabel(string label)
-        => string.Equals(label, "Model status", StringComparison.Ordinal)
-           || string.Equals(label, "Runtime build", StringComparison.Ordinal);
+        => string.Equals(label, "Model status", StringComparison.Ordinal);
 
     private static bool MetricShouldEmphasizeWholeLine(Grid target, string line, bool emphasizeLoadedStatus)
     {
@@ -294,9 +278,6 @@ public static class MetricCardFactory
 
         if (string.Equals(label, "Model status", StringComparison.Ordinal))
             return false;
-
-        if (string.Equals(label, "Runtime build", StringComparison.Ordinal))
-            return emphasizeLoadedStatus;
 
         return false;
     }

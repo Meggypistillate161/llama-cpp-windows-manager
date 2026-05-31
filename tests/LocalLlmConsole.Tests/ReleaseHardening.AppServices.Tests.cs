@@ -404,7 +404,9 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains(rows, row => row.Key == "autoLoadGatewayPolicy" && row.ToolTip.Contains("Single active model", StringComparison.Ordinal));
         Assert.Contains(rows, row => row.Key == "startWithWindows" && row.Type == "choice" && row.ToolTip.Contains("startup", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(rows, row => row.Key == "autoSaveOpenCodeOnLaunchSettingsSave" && row.Type == "choice" && row.Group == "OpenCode");
+        Assert.Contains(rows, row => row.Key == "autoSaveOpenCodeOnLaunchSettingsSave" && row.ToolTip.Contains("OpenCode provider config stores the synced API key in plain text", StringComparison.Ordinal));
         Assert.Contains(rows, row => row.Key == "modelApiKey" && row.Type == "secret" && row.Action == "Generate");
+        Assert.Contains(rows, row => row.Key == "modelApiKey" && row.ToolTip.Contains("OpenCode sync copies this key into OpenCode provider config in plain text", StringComparison.Ordinal));
         Assert.DoesNotContain(rows, row => string.IsNullOrWhiteSpace(row.ToolTip));
     }
 

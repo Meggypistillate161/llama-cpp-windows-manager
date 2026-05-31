@@ -1,6 +1,6 @@
 # Remaining Engineering Work
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 
 ## Immediate Internal Cleanup
 
@@ -213,3 +213,9 @@ These are broader product items already implied by the release docs:
   under `core.autocrlf=true`.
 - Hardened `publish-app.ps1` cleanup so existing `dist` publish folders and
   archives are removed only through bounded, non-reparse-point paths.
+- Hardened runtime package install and portable update extraction with archive
+  path/link validation, runtime package byte-count and SHA-256 verification,
+  bounded auto-load gateway request bodies, observable WSL runtime cleanup, and
+  `-RequireCleanTree` release packaging checks.
+- Updated Overview runtime metrics with compact normal/MTP token monitors,
+  idle-safe live rates, a live Slots card, and normalized GPU metric separators.

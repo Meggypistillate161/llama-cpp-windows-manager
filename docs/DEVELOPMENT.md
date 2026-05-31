@@ -28,9 +28,12 @@ To include packaging on a machine with publish/installer prerequisites, run:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
 
+Use `-RequireCleanTree` on `test-release-gate.ps1`, `publish-app.ps1`, or
+`build-installer.ps1` when producing release artifacts that must come from a
+clean Git worktree.
+
 If `dotnet` is not on `PATH`, set `LLAMA_CPP_WINDOWS_MANAGER_DOTNET` to a .NET
-8 SDK `dotnet.exe`. The local workspace commonly uses
-`D:\LLM\.dotnet-sdk-8\dotnet.exe`.
+8 SDK `dotnet.exe`.
 
 ## Module Layout
 

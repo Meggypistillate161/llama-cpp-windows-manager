@@ -1,14 +1,16 @@
 namespace LocalLlmConsole.Services;
 
 public sealed record RuntimeMetricSummaryPresentation(
-    string GenerationRate,
-    string TotalTokens,
+    string Tokens,
+    string MtpTokens,
+    string Slots,
     string Settings,
     DateTimeOffset? LastKnownCapturedAt)
 {
     public static RuntimeMetricSummaryPresentation NoRuntime { get; } = new(
         "No runtime",
-        "0",
+        "Inactive",
+        "Active 0 | Queued 0\nBusy/decode 0.0",
         "Context No runtime\nKV cache No runtime",
         LastKnownCapturedAt: null);
 }
@@ -23,6 +25,7 @@ public sealed record RuntimeDashboardMetricsApplicationRequest(
 public sealed record RuntimeDashboardMetricsApplicationActions(
     Action<RuntimeSlotSnapshot?> RefreshRuntimeLogTail,
     Action<RuntimeMetricRowsRenderPlan> ApplyMetricRows,
+    Func<RuntimeMtpTokenSnapshot?> ReadMtpTokenStats,
     Action<RuntimeMetricSummaryPresentation> ApplyMetricSummary);
 
 public sealed class RuntimeDashboardMetricsApplicationService
@@ -75,7 +78,7 @@ public sealed class RuntimeDashboardMetricsApplicationService
             _telemetry.ResetMetricCounters();
             if (request.RenderOverview)
                 actions.ApplyMetricRows(_rowsRender.FromSamples([]));
-            actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, [], request.MetricsSettings, decision.SlotSnapshot));
+            actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, [], request.MetricsSettings, decision.SlotSnapshot, actions.ReadMtpTokenStats()));
             return decision.Kind;
         }
 
@@ -83,7 +86,7 @@ public sealed class RuntimeDashboardMetricsApplicationService
         {
             if (request.RenderOverview)
                 actions.ApplyMetricRows(_rowsRender.FromSamples(decision.Samples));
-            actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, decision.Samples, request.MetricsSettings, decision.SlotSnapshot));
+            actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, decision.Samples, request.MetricsSettings, decision.SlotSnapshot, actions.ReadMtpTokenStats()));
             return decision.Kind;
         }
 
@@ -93,7 +96,7 @@ public sealed class RuntimeDashboardMetricsApplicationService
                 decision.Error,
                 _telemetry.LastKnownSamples(request.RuntimeKey)));
         }
-        actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, [], request.MetricsSettings, decision.SlotSnapshot));
+        actions.ApplyMetricSummary(BuildSummary(request.RuntimeKey, [], request.MetricsSettings, decision.SlotSnapshot, actions.ReadMtpTokenStats()));
         return decision.Kind;
     }
 
@@ -101,12 +104,14 @@ public sealed class RuntimeDashboardMetricsApplicationService
         string runtimeKey,
         IReadOnlyList<PrometheusSample> samples,
         AppSettings metricsSettings,
-        RuntimeSlotSnapshot? slotSnapshot)
+        RuntimeSlotSnapshot? slotSnapshot,
+        RuntimeMtpTokenSnapshot? mtpTokenSnapshot)
     {
-        var summary = _telemetry.ApplyMetricSummary(runtimeKey, samples, metricsSettings, slotSnapshot);
+        var summary = _telemetry.ApplyMetricSummary(runtimeKey, samples, metricsSettings, slotSnapshot, mtpTokenSnapshot);
         return new RuntimeMetricSummaryPresentation(
-            summary.GenerationRate,
-            summary.TotalTokens,
+            summary.Tokens,
+            summary.MtpTokens,
+            summary.Slots,
             summary.Settings,
             summary.UsedLastKnown ? summary.LastKnownCapturedAt : null);
     }
@@ -116,6 +121,7 @@ public sealed class RuntimeDashboardMetricsApplicationService
         ArgumentNullException.ThrowIfNull(actions);
         ArgumentNullException.ThrowIfNull(actions.RefreshRuntimeLogTail);
         ArgumentNullException.ThrowIfNull(actions.ApplyMetricRows);
+        ArgumentNullException.ThrowIfNull(actions.ReadMtpTokenStats);
         ArgumentNullException.ThrowIfNull(actions.ApplyMetricSummary);
     }
 }

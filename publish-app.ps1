@@ -4,10 +4,36 @@ param(
   [string] $Configuration = "Release",
   [string] $CertificateThumbprint = "",
   [string] $TimestampServer = "http://timestamp.digicert.com",
-  [switch] $RequireSigned
+  [switch] $RequireSigned,
+  [switch] $RequireCleanTree
 )
 
 $ErrorActionPreference = "Stop"
+
+function Assert-CleanGitTree {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path
+  )
+
+  $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+  if (-not $git) {
+    throw "Git was not found. Install Git or omit -RequireCleanTree."
+  }
+
+  & $git.Source -C $Path rev-parse --is-inside-work-tree | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Clean-tree check requires a Git worktree: $Path"
+  }
+
+  $status = @(& $git.Source -C $Path status --porcelain --untracked-files=all)
+  if ($LASTEXITCODE -ne 0) {
+    throw "git status failed while checking the release worktree."
+  }
+  if ($status.Count -ne 0) {
+    throw "Release requires a clean Git worktree. Commit, stash, or remove changes before retrying:`n$($status -join [Environment]::NewLine)"
+  }
+}
 
 function Remove-DistPath {
   param(
@@ -40,6 +66,10 @@ function Remove-DistPath {
 }
 
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+if ($RequireCleanTree) {
+  Assert-CleanGitTree -Path $AppDir
+}
+
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $DistRoot = [System.IO.Path]::GetFullPath((Join-Path $AppDir "dist"))
 $PublishDir = [System.IO.Path]::GetFullPath((Join-Path $DistRoot "LlamaCppWindowsManager-$Runtime"))
