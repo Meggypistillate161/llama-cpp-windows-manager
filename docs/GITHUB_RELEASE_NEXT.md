@@ -58,8 +58,6 @@ useful live Overview dashboard.
 
 - `dist\LlamaCppWindowsManager-win-x64.zip`
 - `dist\LlamaCppWindowsManager-win-x64.zip.sha256`
-- `dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe`
-- `dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe.sha256`
 - `dist\installer\LlamaCppWindowsManager-Setup-1.1.3-win-x64.exe`
 - `dist\installer\LlamaCppWindowsManager-Setup-1.1.3-win-x64.exe.sha256`
 
