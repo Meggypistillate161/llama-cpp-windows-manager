@@ -14,41 +14,35 @@ namespace LocalLlmConsole;
 
 public partial class MainWindow
 {
-    private void OpenModelFolderRow_Click(object sender, RoutedEventArgs e)
-    {
-        var model = ModelFromRowButton(sender);
-        if (model is null) return;
-
-        var folder = Path.GetDirectoryName(model.ModelPath);
-        if (string.IsNullOrWhiteSpace(folder))
-        {
-            SetStatus("Model folder is unavailable.");
-            return;
-        }
-
-        OpenFolder(folder);
-    }
-
-    private async void DeleteModelRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var model = ModelFromRowButton(sender);
-            if (model is not null) await DeleteModelAsync(model);
-        });
-    }
-
     private async Task DeleteModelAsync(ModelRecord model)
+        => await _coreServices.Models.ModelDeletionApplication.DeleteAsync(model, _settings.ModelsRoot, ModelDeletionActions());
+
+    private ModelDeletionApplicationActions ModelDeletionActions()
+        => new(
+            IsModelLoaded,
+            ConfirmModelDeletion,
+            RunAsync,
+            DeleteModelFromCatalogAsync,
+            RefreshModelsAsync,
+            RefreshOverviewAsync,
+            SetStatus);
+
+    private bool ConfirmModelDeletion(ModelDeletionConfirmation confirmation)
+        => _coreServices.App.Dialogs.Confirm(
+            this,
+            confirmation.Message,
+            confirmation.Title,
+            MessageBoxImage.Warning);
+
+    private async Task DeleteModelFromCatalogAsync(ModelRecord model, string modelsRoot)
     {
-        if (IsModelLoaded(model)) { SetStatus("Unload the selected model before deleting it."); return; }
-        var action = model.Ownership == OwnershipKind.AppOwned ? "delete the downloaded model files" : "remove the model registration only";
-        if (ThemedMessageBox.Show(this, $"This will {action} for:\n\n{model.Name}", "Remove model", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await RunAsync("Removing model...", async () =>
-        {
-            await _catalog!.DeleteAsync(model, _settings.ModelsRoot);
-            await RefreshModelsAsync();
-            await RefreshOverviewAsync();
-            UpdateModelActionButtons();
-        });
+        var catalog = ModelServices.Catalog;
+        Require(catalog);
+        await catalog!.DeleteAsync(model, modelsRoot);
     }
+
+    private ModelFolderApplicationActions ModelFolderActions()
+        => new(
+            OpenFolder,
+            SetStatus);
 }

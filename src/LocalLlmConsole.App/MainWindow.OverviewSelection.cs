@@ -16,8 +16,9 @@ public partial class MainWindow
 {
     private async Task RefreshOverviewModelSelectorAsync()
     {
-        if (_stateStore is null) return;
-        RefreshOverviewModelChoices(await _stateStore.ListModelsAsync());
+        var modelLookup = AppServices.ModelLookupApplication;
+        if (modelLookup is null) return;
+        RefreshOverviewModelChoices(await modelLookup.ListAsync());
     }
 
     private void RefreshOverviewModelChoices(IReadOnlyList<ModelRecord> models)
@@ -27,30 +28,14 @@ public partial class MainWindow
             selectedId = _sessions.SelectedSnapshot()?.ModelId;
 
         _viewModel.Overview.ReplaceModels(models);
-
-        if (_overviewModelCombo is not null)
-        {
-            if (_viewModel.Overview.ModelChoices.Count == 0)
-            {
-                _overviewModelCombo.SelectedIndex = -1;
-            }
-            else
-            {
-                var match = _viewModel.Overview.ModelChoices.FirstOrDefault(model => string.Equals(model.Id, selectedId, StringComparison.OrdinalIgnoreCase))
-                    ?? _viewModel.Overview.ModelChoices.First();
-                _overviewModelCombo.SelectedValue = match.Id;
-            }
-        }
+        _overviewPage.SelectModelChoice(selectedId, _viewModel.Overview.ModelChoices);
 
         UpdateOverviewModelActions();
     }
 
     private ModelRecord? SelectedOverviewModel()
     {
-        if (_overviewModelCombo?.SelectedItem is ModelRecord model) return model;
-        if (_overviewModelCombo?.SelectedValue is string selectedId)
-            return _viewModel.Overview.ModelChoices.FirstOrDefault(item => string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase));
-        return null;
+        return _overviewPage.SelectedModel(_viewModel.Overview.ModelChoices);
     }
 
     private void UpdateOverviewModelActions()
@@ -58,27 +43,83 @@ public partial class MainWindow
         var model = SelectedOverviewModel();
         var hasSelection = model is not null;
         var selectedModelLoaded = IsModelLoaded(model);
-        if (_overviewLoadButton is not null) _overviewLoadButton.IsEnabled = hasSelection && !selectedModelLoaded;
-        if (_overviewUnloadButton is not null) _overviewUnloadButton.IsEnabled = selectedModelLoaded;
+        _overviewPage.SetModelActionsEnabled(hasSelection, selectedModelLoaded);
     }
 
     private async Task SelectOverviewModelSessionAsync()
     {
+        if (_coreServices.Ui.SelectionReentrancy.IsLoadedSessionSelectionChanging) return;
+
         var model = SelectedOverviewModel();
-        if (model is null) return;
+        await _coreServices.Runtime.OverviewModelSelectionApplication.SelectAsync(
+            new OverviewModelSelectionApplicationRequest(
+                model,
+                IsModelLoaded(model),
+                IsModelActive(model)),
+            OverviewModelSelectionActions());
+    }
 
-        var selectedLoadedModel = IsModelLoaded(model);
-        if (selectedLoadedModel && !IsModelActive(model))
-        {
-            _sessions.SelectModel(model.Id);
-            _activeRuntimeSettings = _sessions.ActiveSettings;
-            await SaveActiveRuntimeSessionsAsync();
-        }
+    private OverviewModelSelectionApplicationActions OverviewModelSelectionActions()
+        => new(
+            _coreServices.Runtime.RuntimeSessions.SelectModel,
+            settings => _activeRuntimeSettings = settings,
+            SaveActiveRuntimeSessionsAsync,
+            ResetMetricCounters,
+            RefreshRuntimeMetricsAsync,
+            SetStatus);
 
-        ResetMetricCounters();
-        if (!selectedLoadedModel)
-            SetStatus($"{model.Name} is not loaded. Load it to expose an OpenAI-compatible endpoint.");
-        await RefreshRuntimeMetricsAsync();
+    private async Task SelectLoadedSessionRowAsync()
+    {
+        if (_overviewPage.SelectedLoadedSessionRow is not { } row) return;
+
+        var modelId = row.Data["ModelId"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(modelId)) return;
+
+        using var selectionScope = _coreServices.Ui.SelectionReentrancy.TryBeginLoadedSessionSelection();
+        if (selectionScope is null) return;
+
+        await _coreServices.Runtime.OverviewLoadedSessionSelectionApplication.SelectAsync(
+            modelId,
+            OverviewLoadedSessionSelectionActions());
+    }
+
+    private OverviewLoadedSessionSelectionApplicationActions OverviewLoadedSessionSelectionActions()
+        => new(
+            FindOverviewModelChoice,
+            RefreshOverviewModelSelectorAsync,
+            _overviewPage.SelectModelId,
+            _coreServices.Runtime.RuntimeSessions.SelectModel,
+            settings => _activeRuntimeSettings = settings,
+            ResetMetricCounters,
+            SaveActiveRuntimeSessionsAsync,
+            RefreshRuntimeMetricsAsync,
+            UpdateOverviewModelActions,
+            SetStatus);
+
+    private ModelRecord? FindOverviewModelChoice(string modelId)
+        => _viewModel.Overview.ModelChoices.FirstOrDefault(item => string.Equals(item.Id, modelId, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<bool> SelectOverviewLoadedModelAsync(string modelId)
+    {
+        if (_viewModel.CurrentPage != "Overview" || string.IsNullOrWhiteSpace(modelId))
+            return false;
+
+        if (FindOverviewModelChoice(modelId) is null)
+            await RefreshOverviewModelSelectorAsync();
+
+        var previouslySelected = SelectedOverviewModel()?.Id ?? "";
+        using (_coreServices.Ui.SelectionReentrancy.SuppressLoadedSessionSelection())
+            _overviewPage.SelectModelId(modelId);
+
+        var selection = _coreServices.Runtime.RuntimeSessions.SelectModel(modelId);
+        if (!selection.Selected)
+            return false;
+
+        _activeRuntimeSettings = selection.ActiveSettings;
+        if (!string.Equals(previouslySelected, modelId, StringComparison.OrdinalIgnoreCase))
+            ResetMetricCounters();
+        UpdateOverviewModelActions();
+        return true;
     }
 
     private async Task<(string Model, string Runtime)> ActiveRuntimeLabelsAsync()
@@ -88,31 +129,19 @@ public partial class MainWindow
         var active = selectedModel is null
             ? _sessions.SelectedSnapshot()
             : _sessions.SessionForModel(selectedModel.Id);
-        if (selectedModel is not null && active is null)
-            return ($"Stopped: {selectedModel.Name}", "No loaded runtime");
-        if (active is null) return ("None", "Stopped");
-        var status = active.Status switch
-        {
-            LoadedModelSessionStatus.Running => "Loaded",
-            LoadedModelSessionStatus.Warm => "Loaded",
-            LoadedModelSessionStatus.Loading => "Loading",
-            LoadedModelSessionStatus.Failed => "Failed",
-            _ => "Stopped"
-        };
-        if (_llama.State == LlamaRuntimeState.Failed && _llama.LastExitCode is int exitCode)
-            status = $"Failed ({exitCode})";
-        return ($"{status}: {active.ModelName}", string.IsNullOrWhiteSpace(active.RuntimeName) ? "Unknown runtime" : active.RuntimeName);
+        var labels = _coreServices.Runtime.RuntimeOverviewStatus.Labels(new RuntimeOverviewStatusRequest(
+            selectedModel,
+            active,
+            _llama.State,
+            _llama.LastExitCode));
+        return (labels.Model, labels.Runtime);
     }
 
     private async Task<string> ActiveModelDisplayNameAsync(string modelId)
     {
-        var model = modelId;
-        if (_stateStore is not null)
-        {
-            var models = await _stateStore.ListModelsAsync();
-            model = models.FirstOrDefault(item => string.Equals(item.Id, modelId, StringComparison.OrdinalIgnoreCase))?.Name ?? model;
-        }
-
-        return string.IsNullOrWhiteSpace(model) ? "Unknown model" : model;
+        var modelLookup = AppServices.ModelLookupApplication;
+        return modelLookup is null
+            ? (string.IsNullOrWhiteSpace(modelId) ? "Unknown model" : modelId)
+            : await modelLookup.DisplayNameAsync(modelId);
     }
 }

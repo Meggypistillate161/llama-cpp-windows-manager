@@ -16,140 +16,180 @@ public partial class MainWindow
 {
     private async Task RefreshOpenCodeAsync(string preferredModelId = "", string preferredAgentId = "")
     {
-        Require(_openCode);
-        preferredModelId = string.IsNullOrWhiteSpace(preferredModelId) ? SelectedOpenCodeModel()?.FullId ?? "" : preferredModelId;
-        preferredAgentId = string.IsNullOrWhiteSpace(preferredAgentId) ? SelectedOpenCodeAgent()?.Id ?? "" : preferredAgentId;
-
-        UpdateOpenCodePathText();
-
-        _viewModel.OpenCode.ReplaceLocalModels(_stateStore is null ? [] : await _stateStore.ListModelsAsync());
-        if (_openCodeLocalModelCombo is not null && _viewModel.OpenCode.LocalModelChoices.Count > 0)
-            _openCodeLocalModelCombo.SelectedIndex = 0;
-
-        _viewModel.OpenCode.ReplaceModels(_openCode!.ListModels(_openCodeFiles.ConfigPath));
-        if (_openCodeModelCombo is not null)
-        {
-            _openCodeModelCombo.SelectedItem = _viewModel.OpenCode.ModelChoices.FirstOrDefault(model => string.Equals(model.FullId, preferredModelId, StringComparison.OrdinalIgnoreCase))
-                ?? _viewModel.OpenCode.ModelChoices.FirstOrDefault(model => !model.IsAddNew)
-                ?? _viewModel.OpenCode.ModelChoices.FirstOrDefault();
-        }
-
-        _viewModel.OpenCode.ReplaceAgents(_openCode.ListAgents(_openCodeFiles.ConfigPath, _openCodeFiles.AgentsDirectory));
-        if (_openCodeAgentCombo is not null)
-        {
-            _openCodeAgentCombo.SelectedItem = _viewModel.OpenCode.AgentChoices.FirstOrDefault(agent => string.Equals(agent.Id, preferredAgentId, StringComparison.OrdinalIgnoreCase))
-                ?? _viewModel.OpenCode.AgentChoices.FirstOrDefault(agent => !agent.IsAddNew)
-                ?? _viewModel.OpenCode.AgentChoices.FirstOrDefault();
-        }
-
-        await LoadSelectedOpenCodeModelAsync();
-        await LoadSelectedOpenCodeAgentAsync();
+        await _coreServices.OpenCodeServices.OpenCodeRefreshApplication.RefreshAsync(
+            new OpenCodeRefreshApplicationRequest(
+                _openCodeFileSet.Current,
+                _settings,
+                preferredModelId,
+                preferredAgentId,
+                SelectedOpenCodeModel()?.FullId ?? "",
+                SelectedOpenCodeAgent()?.Id ?? "",
+                _openCodePage.HealthText is not null),
+            OpenCodeRefreshActions());
     }
 
     private async Task LoadSelectedOpenCodeModelAsync()
     {
-        await Task.CompletedTask;
-        var model = SelectedOpenCodeModel();
-        var adding = model?.IsAddNew ?? true;
-        if (_openCodeAddModelPanel is not null) _openCodeAddModelPanel.Visibility = adding ? Visibility.Visible : Visibility.Collapsed;
-        if (_openCodeDeleteModelButton is not null) _openCodeDeleteModelButton.Visibility = adding ? Visibility.Collapsed : Visibility.Visible;
-
-        if (_openCodeModelSnippetBox is null) return;
-        if (adding)
-        {
-            _openCodeSelectedModelSnapshot = "";
-            UpdateOpenCodeModelEditorState();
-            await LoadOpenCodeLocalModelDraftAsync();
-            return;
-        }
-
-        try
-        {
-            Require(_openCode);
-            var snippet = _openCode!.ReadModelSnippet(_openCodeFiles.ConfigPath, model!);
-            _openCodeSelectedModelSnapshot = snippet;
-            _updatingOpenCodeModelEditor = true;
-            _openCodeModelSnippetBox.Text = snippet;
-            _updatingOpenCodeModelEditor = false;
-            UpdateOpenCodeModelEditorState();
-        }
-        catch (Exception ex)
-        {
-            _openCodeSelectedModelSnapshot = "";
-            _updatingOpenCodeModelEditor = true;
-            _openCodeModelSnippetBox.Text = ex.Message;
-            _updatingOpenCodeModelEditor = false;
-            UpdateOpenCodeModelEditorState();
-            SetStatus(ex.Message);
-        }
+        await _coreServices.OpenCodeServices.OpenCodeModelApplication.LoadSelectedAsync(
+            new OpenCodeModelLoadApplicationRequest(
+                _openCodeFileSet.Current,
+                SelectedOpenCodeModel(),
+                _openCodePage.ModelSnippetBox is not null),
+            OpenCodeModelLoadSelectedActions());
     }
 
     private async Task LoadSelectedOpenCodeAgentAsync()
     {
-        await Task.CompletedTask;
-        var agent = SelectedOpenCodeAgent();
-        var adding = agent?.IsAddNew ?? true;
-        if (_openCodeAddAgentPanel is not null) _openCodeAddAgentPanel.Visibility = adding ? Visibility.Visible : Visibility.Collapsed;
-        if (_openCodeSaveAgentButton is not null) _openCodeSaveAgentButton.IsEnabled = !adding;
-        if (_openCodeDeleteAgentButton is not null) _openCodeDeleteAgentButton.IsEnabled = !adding;
-        if (_openCodeCreateAgentButton is not null) _openCodeCreateAgentButton.IsEnabled = true;
+        await _coreServices.OpenCodeServices.OpenCodeAgentApplication.LoadSelectedAsync(
+            new OpenCodeAgentLoadApplicationRequest(
+                _openCodeFileSet.Current,
+                SelectedOpenCodeAgent(),
+                _openCodePage.AgentSnippetBox is not null),
+            OpenCodeAgentLoadActions());
+    }
 
-        if (_openCodeAgentSnippetBox is null) return;
-        if (adding)
-        {
-            _openCodeAgentSnippetBox.Text = "";
-            return;
-        }
+    private OpenCodeChoicesApplicationActions OpenCodeChoicesActions()
+        => new(
+            _viewModel.OpenCode.ReplaceChoices,
+            () =>
+            {
+                if (_openCodePage.LocalModelCombo is not null)
+                    _openCodePage.LocalModelCombo.SelectedIndex = 0;
+            },
+            model =>
+            {
+                if (_openCodePage.ModelCombo is not null)
+                    _openCodePage.ModelCombo.SelectedItem = model;
+            },
+            agent =>
+            {
+                if (_openCodePage.AgentCombo is not null)
+                    _openCodePage.AgentCombo.SelectedItem = agent;
+            });
 
-        try
-        {
-            Require(_openCode);
-            _openCodeAgentSnippetBox.Text = _openCode!.ReadAgentSnippet(_openCodeFiles.ConfigPath, agent!);
-        }
-        catch (Exception ex)
-        {
-            _openCodeAgentSnippetBox.Text = ex.Message;
-            SetStatus(ex.Message);
-        }
+    private OpenCodeModelLoadApplicationActions OpenCodeModelLoadActions()
+        => new(
+            visible =>
+            {
+                if (_openCodePage.AddModelPanel is not null)
+                    _openCodePage.AddModelPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            },
+            visible =>
+            {
+                if (_openCodePage.DeleteModelButton is not null)
+                    _openCodePage.DeleteModelButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            },
+            _openCodeModelEditor.ClearSavedSnippet,
+            _openCodeModelEditor.SetSavedSnippet,
+            SetOpenCodeModelSnippetText,
+            UpdateOpenCodeModelEditorState,
+            SetStatus);
+
+    private OpenCodeModelLoadSelectedApplicationActions OpenCodeModelLoadSelectedActions()
+        => new(LoadOpenCodeLocalModelDraftAsync, OpenCodeModelLoadActions());
+
+    private OpenCodeAgentLoadApplicationActions OpenCodeAgentLoadActions()
+        => new(
+            ApplyOpenCodeAgentEditorState,
+            SetOpenCodeAgentSnippetText,
+            SetStatus);
+
+    private void ApplyOpenCodeAgentEditorState(OpenCodeAgentEditorState state)
+    {
+        if (_openCodePage.AddAgentPanel is not null) _openCodePage.AddAgentPanel.Visibility = state.AddPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (_openCodePage.SaveAgentButton is not null) _openCodePage.SaveAgentButton.IsEnabled = state.SaveEnabled;
+        if (_openCodePage.DeleteAgentButton is not null) _openCodePage.DeleteAgentButton.IsEnabled = state.DeleteEnabled;
+        if (_openCodePage.CreateAgentButton is not null) _openCodePage.CreateAgentButton.IsEnabled = state.CreateEnabled;
+    }
+
+    private void SetOpenCodeAgentSnippetText(string text)
+    {
+        if (_openCodePage.AgentSnippetBox is not null)
+            _openCodePage.AgentSnippetBox.Text = text;
     }
 
     private async Task SaveOpenCodeModelSnippetAsync()
     {
-        var model = SelectedOpenCodeModel();
-        if (model is null || model.IsAddNew) { SetStatus("Choose an OpenCode model first."); return; }
-        Require(_openCode);
-        var snippet = _openCodeModelSnippetBox?.Text ?? "";
-        if (_openCode!.SnippetsEquivalent(_openCodeSelectedModelSnapshot, snippet))
-        {
-            UpdateOpenCodeModelEditorState();
-            SetStatus($"OpenCode model {model.FullId} is already saved.");
-            return;
-        }
-
-        await RunAsync("Saving OpenCode model snippet...", async () =>
-        {
-            _openCode.SaveModelSnippet(_openCodeFiles.ConfigPath, model, snippet);
-            await RefreshOpenCodeAsync(preferredModelId: model.FullId);
-            SetStatus($"Saved OpenCode model {model.FullId}.");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeModelApplication.SaveSnippetAsync(
+            new OpenCodeModelSaveApplicationRequest(
+                _openCodeFileSet.Current,
+                SelectedOpenCodeModel(),
+                _openCodePage.ModelSnippet,
+                _openCodeModelEditor.SavedSnippet),
+            OpenCodeModelSaveActions());
     }
 
     private async Task DeleteOpenCodeModelAsync()
     {
-        var model = SelectedOpenCodeModel();
-        if (model is null || model.IsAddNew) { SetStatus("Choose an OpenCode model first."); return; }
-        if (ThemedMessageBox.Show(this, $"Delete this OpenCode model config?\n\n{model.Label}", "Delete OpenCode model", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-            return;
-
-        await RunAsync("Deleting OpenCode model config...", async () =>
-        {
-            Require(_openCode);
-            _openCode!.DeleteModel(_openCodeFiles.ConfigPath, model);
-            await RefreshOpenCodeAsync();
-            SetStatus($"Deleted OpenCode model {model.FullId}.");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeModelApplication.DeleteAsync(
+            new OpenCodeModelDeleteApplicationRequest(
+                _openCodeFileSet.Current,
+                SelectedOpenCodeModel()),
+            OpenCodeModelDeleteActions());
     }
 
-    private OpenCodeModelEntry? SelectedOpenCodeModel() => _openCodeModelCombo?.SelectedItem as OpenCodeModelEntry;
-    private OpenCodeAgentEntry? SelectedOpenCodeAgent() => _openCodeAgentCombo?.SelectedItem as OpenCodeAgentEntry;
+    private OpenCodeModelEntry? SelectedOpenCodeModel() => _openCodePage.SelectedModel;
+    private OpenCodeAgentEntry? SelectedOpenCodeAgent() => _openCodePage.SelectedAgent;
+
+    private OpenCodeHealthApplicationActions OpenCodeHealthActions()
+        => new(
+            summary =>
+            {
+                if (_openCodePage.HealthText is not null)
+                    _openCodePage.HealthText.Text = summary;
+            },
+            detail =>
+            {
+                if (_openCodePage.HealthText is not null)
+                    _openCodePage.HealthText.ToolTip = TooltipText(detail);
+            },
+            resourceKey =>
+            {
+                if (_openCodePage.HealthText is not null)
+                    _openCodePage.HealthText.Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources[resourceKey];
+            });
+
+    private OpenCodeRefreshApplicationActions OpenCodeRefreshActions()
+        => new(
+            ListOpenCodeLocalModelsAsync,
+            LoadSelectedOpenCodeModelAsync,
+            LoadSelectedOpenCodeAgentAsync,
+            OpenCodePathActions(),
+            OpenCodeHealthActions(),
+            OpenCodeChoicesActions());
+
+    private async Task<IReadOnlyList<ModelRecord>> ListOpenCodeLocalModelsAsync()
+        => AppServices.ModelLookupApplication is null ? [] : await AppServices.ModelLookupApplication.ListAsync();
+
+    private async Task UpdateOpenCodeHealthAsync()
+    {
+        if (_openCodePage.HealthText is null) return;
+        await _coreServices.OpenCodeServices.OpenCodeRefreshApplication.RefreshHealthAsync(
+            _openCodeFileSet.Current,
+            _settings,
+            ListOpenCodeLocalModelsAsync,
+            OpenCodeHealthActions());
+    }
+
+    private OpenCodeModelCommandApplicationActions OpenCodeModelCommandActions()
+        => new(
+            UpdateOpenCodeModelEditorState,
+            preferredModelId => RefreshOpenCodeAsync(preferredModelId: preferredModelId),
+            () => RefreshOpenCodeAsync(),
+            SetStatus);
+
+    private OpenCodeModelSaveApplicationActions OpenCodeModelSaveActions()
+        => new(
+            RunAsync,
+            ConfirmOpenCodeCommand,
+            OpenCodeModelCommandActions());
+
+    private OpenCodeModelDeleteApplicationActions OpenCodeModelDeleteActions()
+        => new(
+            RunAsync,
+            ConfirmOpenCodeCommand,
+            OpenCodeModelCommandActions());
+
+    private bool ConfirmOpenCodeCommand(OpenCodeCommandConfirmation confirmation)
+        => _coreServices.App.Dialogs.Confirm(this, confirmation.Message, confirmation.Title, MessageBoxImage.Warning);
 }

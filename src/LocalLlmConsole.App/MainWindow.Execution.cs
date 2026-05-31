@@ -15,60 +15,26 @@ namespace LocalLlmConsole;
 public partial class MainWindow
 {
     private async Task RunAsync(string message, Func<Task> action)
-    {
-        if (!TryBeginUiBusy(message)) return;
-        try
-        {
-            SetStatus(message);
-            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-            await action();
-            if (_viewModel.StatusText == message) SetStatus("");
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message);
-            await WriteAppLogAsync(ex);
-            ThemedMessageBox.Show(this, ex.Message, AppDisplayName, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            EndUiBusy();
-        }
-    }
+        => await _coreServices.App.ForegroundTasks.RunBusyAsync(message, action, ForegroundTaskActions());
 
     private async Task RunEventAsync(Func<Task> action)
-    {
-        try
-        {
-            await action();
-        }
-        catch (Exception ex)
-        {
-            SetStatus(ex.Message);
-            await WriteAppLogAsync(ex);
-            ThemedMessageBox.Show(this, ex.Message, AppDisplayName, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
+        => await _coreServices.App.ForegroundTasks.RunEventAsync(action, ForegroundTaskActions());
 
     private void RunBackground(Func<Task> action, string failureMessage)
     {
-        _ = RunBackgroundAsync(action, failureMessage);
+        _ = _coreServices.App.BackgroundTasks.RunAsync(
+            action,
+            failureMessage,
+            new BackgroundTaskApplicationActions(SetStatus, WriteAppLogAsync));
     }
 
-    private async Task RunBackgroundAsync(Func<Task> action, string failureMessage)
-    {
-        try
-        {
-            await action();
-        }
-        catch (OperationCanceledException)
-        {
-            // Superseded UI refreshes are expected when the user changes selection quickly.
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"{failureMessage}: {ex.Message}");
-            await WriteAppLogAsync(ex);
-        }
-    }
+    private ForegroundTaskApplicationActions ForegroundTaskActions()
+        => new(
+            TryBeginUiBusy,
+            EndUiBusy,
+            SetStatus,
+            () => _viewModel.StatusText,
+            async () => await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background),
+            WriteAppLogAsync,
+            ex => _coreServices.App.Dialogs.Notify(this, ex.Message, AppDisplayName, MessageBoxImage.Error));
 }

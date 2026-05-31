@@ -81,6 +81,17 @@ function Sign-FileIfRequested([string] $PathToSign, [string] $Thumbprint, [strin
   }
 }
 
+function Assert-SignedIfRequired([string] $PathToCheck, [bool] $RequireValidSignature, [string] $ArtifactLabel) {
+  if (-not $RequireValidSignature) {
+    return
+  }
+
+  $signature = Get-AuthenticodeSignature -FilePath $PathToCheck
+  if ($signature.Status -ne "Valid") {
+    throw "$ArtifactLabel is not signed: $PathToCheck"
+  }
+}
+
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $PublishScript = Join-Path $AppDir "publish-app.ps1"
@@ -121,6 +132,7 @@ if (-not $SkipPublish) {
 if (-not (Test-Path -LiteralPath $PublishedExe)) {
   throw "Published executable not found. Run publish-app.ps1 first or omit -SkipPublish: $PublishedExe"
 }
+Assert-SignedIfRequired $PublishedExe $RequireSigned.IsPresent "Published executable"
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 if (Test-Path -LiteralPath $ExpectedInstaller) {

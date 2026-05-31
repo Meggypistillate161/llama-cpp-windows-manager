@@ -16,137 +16,49 @@ public partial class MainWindow
 {
     private void StartRuntimeDashboardRefreshTimer()
     {
-        _runtimeDashboardTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _runtimeDashboardTimer.Interval = TimeSpan.FromSeconds(1);
-        _runtimeDashboardTimer.Tick -= RuntimeDashboardTimer_Tick;
-        _runtimeDashboardTimer.Tick += RuntimeDashboardTimer_Tick;
-        _runtimeDashboardTimer.Start();
+        _coreServices.Ui.RuntimeDashboardRefreshTimer.Start(
+            TimeSpan.FromSeconds(1),
+            RuntimeDashboardTimerRefreshAsync,
+            ex => SetStatus($"Runtime refresh failed: {ex.Message}"));
     }
 
     private void StopRuntimeDashboardRefreshTimer()
     {
-        _runtimeDashboardTimer?.Stop();
+        _coreServices.Ui.RuntimeDashboardRefreshTimer.Stop();
     }
 
-    private async void RuntimeDashboardTimer_Tick(object? sender, EventArgs e)
+    private async Task RuntimeDashboardTimerRefreshAsync()
     {
-        if (_viewModel.CurrentPage != "Overview" && !_sessions.HasRunningSessions) return;
-        try
-        {
-            await RefreshRuntimeMetricsAsync();
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Runtime refresh failed: {ex.Message}");
-        }
+        if (!_coreServices.Runtime.RuntimeTelemetryApplication.ShouldRunRefreshTimer(_viewModel.CurrentPage, _sessions.HasRunningSessions)) return;
+        await RefreshRuntimeMetricsAsync();
     }
 
     private async Task DeleteSelectedRuntimeAsync()
     {
+        var runtimeCatalog = RuntimeServices.RuntimeCatalogApplication;
+        if (runtimeCatalog is null) return;
         var runtime = SelectedRuntime();
-        if (runtime is null || _stateStore is null) return;
-        if (ThemedMessageBox.Show(this, $"Remove runtime registration?\n\n{runtime.Name}", "Remove runtime", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await _stateStore.DeleteRuntimeAsync(runtime.Id);
-        await RefreshRuntimesAsync();
-        await RefreshOverviewAsync();
-    }
-
-    private async void DownloadRuntimePresetRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            if ((sender as FrameworkElement)?.Tag is RuntimeBuildPresetRow { IsCustomAdd: true } row)
-            {
-                await AddCustomRuntimeRepositoryFromRowAsync(row);
-                return;
-            }
-
-            var preset = RuntimeBuildPresetFromRowButton(sender);
-            if (preset is not null) await DownloadRuntimeSourceAsync(preset);
-        });
-    }
-
-    private async void InstallRuntimePackageRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var preset = RuntimePackagePresetFromRowButton(sender);
-            if (preset is not null) await InstallRuntimePackageAsync(preset);
-        });
-    }
-
-    private async void CheckRuntimePackageUpdateRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var row = (sender as FrameworkElement)?.Tag as RuntimePackagePresetRow;
-            var preset = RuntimePackagePresetFromRowButton(sender);
-            if (preset is not null) await CheckRuntimePackageUpdateAsync(preset, row);
-        });
-    }
-
-    private async void DeleteRuntimePackageRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var preset = RuntimePackagePresetFromRowButton(sender);
-            if (preset is not null) await DeleteRuntimePackageBuildsAsync(preset);
-        });
-    }
-
-    private async void CheckRuntimePresetUpdateRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var row = (sender as FrameworkElement)?.Tag as RuntimeBuildPresetRow;
-            var preset = RuntimeBuildPresetFromRowButton(sender);
-            if (preset is not null) await CheckRuntimePresetUpdateAsync(preset, row);
-        });
-    }
-
-    private async void DeleteRuntimePresetRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var preset = RuntimeBuildPresetFromRowButton(sender);
-            if (preset is not null) await DeleteAllRuntimePresetBuildsAsync(preset);
-        });
-    }
-
-    private async void BuildRuntimeRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var source = RuntimeSourceFromRowButton(sender);
-            if (source is not null) await BuildRuntimeSourceAsync(source);
-        });
-    }
-
-    private async void DeleteRuntimeRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            var source = RuntimeSourceFromRowButton(sender);
-            if (source is not null)
-            {
-                await DeleteRuntimeSourceAsync(source);
-                return;
-            }
-
-            var runtime = RuntimeFromRowButton(sender);
-            if (runtime is not null) await DeleteRuntimeBuildAsync(runtime);
-        });
+        await runtimeCatalog.DeleteRegistrationAsync(runtime, RuntimeCatalogDeleteRegistrationActions());
     }
 
     private void RuntimeGrid_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (FindParent<WpfButton>(e.OriginalSource as DependencyObject) is not null) return;
         var row = FindParent<DataGridRow>(e.OriginalSource as DependencyObject);
-        if (row?.IsSelected == true && _runtimeGrid is not null)
+        if (_runtimesPage.ClearSelectedRuntimeIfRowAlreadySelected(row))
         {
-            _runtimeGrid.SelectedItem = null;
             e.Handled = true;
         }
     }
+
+    private RuntimeCatalogDeleteRegistrationActions RuntimeCatalogDeleteRegistrationActions()
+        => new(
+            runtime => _coreServices.App.Dialogs.Confirm(
+                this,
+                $"Remove runtime registration?{Environment.NewLine}{Environment.NewLine}{runtime.Name}",
+                "Remove runtime",
+                MessageBoxImage.Warning),
+            RefreshRuntimesAsync,
+            RefreshOverviewAsync);
 
 }

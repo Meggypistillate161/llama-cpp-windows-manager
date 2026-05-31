@@ -14,16 +14,16 @@ namespace LocalLlmConsole;
 
 public partial class MainWindow
 {
-    private ModelRecord? SelectedModel() => _modelsGrid?.SelectedItem is ModelGridRow row ? row.Model : null;
-    private RuntimeRecord? SelectedRuntime() => _runtimeGrid?.SelectedItem is RuntimeCatalogRow row ? row.Runtime : null;
+    private ModelRecord? SelectedModel()
+        => _modelsPage.SelectedModel;
+    private RuntimeRecord? SelectedRuntime() => _runtimesPage.SelectedRuntime;
 
     private static ModelRecord? ModelFromRow(ModelGridRow row) => row.Model;
 
     private async Task<ModelRecord?> FindModelByIdAsync(string modelId)
     {
-        if (_stateStore is null || string.IsNullOrWhiteSpace(modelId)) return null;
-        var models = await _stateStore.ListModelsAsync();
-        return models.FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
+        var modelLookup = AppServices.ModelLookupApplication;
+        return modelLookup is null ? null : await modelLookup.FindByIdAsync(modelId);
     }
 
     private static RuntimeRecord? RuntimeFromRow(RuntimeCatalogRow row) => row.Runtime;
@@ -34,6 +34,16 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.Tag is not ModelGridRow row) return null;
         return ModelFromRow(row);
+    }
+
+    private void SelectModelGridRow(DataGrid? selectedGrid, DataGrid? otherGrid)
+    {
+        if (!_modelsPage.TrySelectModelGridRow(selectedGrid, otherGrid)) return;
+
+        using var selection = _coreServices.Ui.SelectionReentrancy.TryBeginModelGridSelection();
+        if (selection is null) return;
+
+        ScheduleSelectedModelLaunchSettingsRefresh();
     }
 
     private RuntimeRecord? RuntimeFromRowButton(object sender)
@@ -60,21 +70,6 @@ public partial class MainWindow
         return row.Preset;
     }
 
-    private bool IsRuntimeActivelyUsed(RuntimeRecord runtime)
-        => _sessions.Snapshots().Any(session => session.IsRunning && string.Equals(session.RuntimeId, runtime.Id, StringComparison.OrdinalIgnoreCase));
-
-    private bool CanDeleteRuntimeFiles(RuntimeRecord runtime, out string folder, out string reason)
-        => RuntimeFileService.CanDeleteRuntimeFiles(runtime, _settings.RuntimeRoot, out folder, out reason);
-
-    private bool IsSafeRuntimeFolder(string folder)
-        => RuntimeFileService.IsSafeRuntimeFolder(_settings.RuntimeRoot, folder);
-
-    private void DeleteSafeRuntimeFolder(string folder)
-        => RuntimeFileService.DeleteSafeRuntimeFolder(_settings.RuntimeRoot, folder);
-
-    private void DeleteRuntimeFiles(string folder)
-        => RuntimeFileService.DeleteRuntimeFiles(_settings.RuntimeRoot, folder);
-
     private JobRecord? JobFromRowButton(object sender)
     {
         if ((sender as FrameworkElement)?.Tag is not UiRow row) return null;
@@ -90,19 +85,21 @@ public partial class MainWindow
 
     private JobRecord? SelectedDownloadJob()
     {
-        if (_downloadHistoryGrid?.SelectedItem is not UiRow row) return null;
+        if (_modelsPage.SelectedDownloadHistoryRow is not { } row) return null;
         return JobFromRow(row);
     }
 
     private async Task<HuggingFaceInstallInventory> InstalledHuggingFaceInventoryAsync()
     {
-        if (_stateStore is null) return HuggingFaceInstallStateService.BuildInventory([]);
-        return HuggingFaceInstallStateService.BuildInventory(await _stateStore.ListModelsAsync());
+        var modelLookup = AppServices.ModelLookupApplication;
+        return modelLookup is null
+            ? HuggingFaceInstallStateService.BuildInventory([])
+            : await modelLookup.BuildHuggingFaceInstallInventoryAsync();
     }
 
     private async Task RefreshHuggingFaceInstallStateAsync()
     {
-        if (_hfShowingDownloadHistory || _hfGrid is null || _viewModel.HuggingFace.SearchRows.Count == 0) return;
+        if (_downloadHistoryPageState.IsShowingHistory || !_modelsPage.HasHuggingFaceGrid || _viewModel.HuggingFace.SearchRows.Count == 0) return;
         var installed = await InstalledHuggingFaceInventoryAsync();
         foreach (var row in _viewModel.HuggingFace.SearchRows)
         {
@@ -112,77 +109,10 @@ public partial class MainWindow
             row.C6 = isInstalled ? "Installed" : "Download";
             row.B1 = !isInstalled;
         }
-        _hfGrid.Items.Refresh();
-    }
-
-    private void RegisterWslBuildMarker(string marker)
-    {
-        lock (_wslBuildMarkerGate)
-            _activeWslBuildMarkers.Add(marker);
-    }
-
-    private void UnregisterWslBuildMarker(string marker)
-    {
-        lock (_wslBuildMarkerGate)
-            _activeWslBuildMarkers.Remove(marker);
+        _modelsPage.RefreshHuggingFaceGrid();
     }
 
     private async Task CleanupActiveWslBuildsAsync()
-    {
-        string[] markers;
-        lock (_wslBuildMarkerGate)
-            markers = _activeWslBuildMarkers.ToArray();
+        => await _coreServices.Runtime.RuntimeBuildMarkers.CleanupActiveAsync(_settings.WslDistro);
 
-        foreach (var marker in markers)
-            await CleanupWslBuildMarkerAsync(_settings.WslDistro, marker);
-    }
-
-    private async Task CleanupInterruptedRuntimeBuildJobsAsync()
-    {
-        if (_stateStore is null) return;
-        foreach (var job in await _stateStore.ListJobsAsync())
-        {
-            if (!string.Equals(job.Kind, "runtime-build", StringComparison.OrdinalIgnoreCase)
-                || job.Status != JobStatus.Interrupted)
-                continue;
-
-            try
-            {
-                var payload = JsonNode.Parse(job.PayloadJson);
-                var marker = payload?["processMarker"]?.ToString() ?? "";
-                if (string.IsNullOrWhiteSpace(marker)) continue;
-                var distro = payload?["wslDistro"]?.ToString()
-                    ?? payload?["distro"]?.ToString()
-                    ?? _settings.WslDistro;
-                await CleanupWslBuildMarkerAsync(distro, marker);
-            }
-            catch
-            {
-                // Stale job payloads are best-effort recovery only.
-            }
-        }
-    }
-
-    private async Task CleanupWslBuildMarkerAsync(string distro, string marker)
-    {
-        if (string.IsNullOrWhiteSpace(distro) || string.IsNullOrWhiteSpace(marker)) return;
-        try
-        {
-            var psi = new ProcessStartInfo(HostExecutableResolver.WslExe())
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            foreach (var arg in new[] { "-d", distro, "--", "bash", "-lc", CommandLineService.WslKillByEnvironmentMarkerCommand(marker) })
-                psi.ArgumentList.Add(arg);
-            _ = await _processRunner.RunAsync(psi, TimeSpan.FromSeconds(10));
-        }
-        catch
-        {
-            // Best effort cleanup for cancelled WSL build jobs.
-        }
-    }
 }

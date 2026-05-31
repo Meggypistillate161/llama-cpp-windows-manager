@@ -16,72 +16,52 @@ public partial class MainWindow
 {
     private async Task SearchHuggingFaceAsync()
     {
-        var query = _hfQueryBox?.Text.Trim() ?? "";
-        await RunAsync("Searching Hugging Face...", async () =>
-        {
-            ConfigureHfSearchGrid();
-            var installed = await InstalledHuggingFaceInventoryAsync();
-            _viewModel.HuggingFace.ReplaceSearchResults(await _huggingFace!.SearchAsync(query), installed, _settings.ModelsRoot);
-        });
+        var query = _modelsPage.HuggingFaceQuery;
+        var huggingFace = AppServices.HuggingFace;
+        Require(huggingFace);
+        await _coreServices.HuggingFaceServices.HuggingFaceSearchApplication.SearchAsync(query, _settings, HuggingFaceSearchActions(huggingFace!));
     }
+
+    private HuggingFaceSearchApplicationActions HuggingFaceSearchActions(HuggingFaceService huggingFace)
+        => new(
+            RunAsync,
+            ConfigureHfSearchGrid,
+            InstalledHuggingFaceInventoryAsync,
+            async query => await huggingFace.SearchAsync(query),
+            _viewModel.HuggingFace.ReplaceSearchResults);
 
     private async Task DownloadSelectedHfAsync()
     {
-        if (_hfShowingDownloadHistory)
+        if (_downloadHistoryPageState.IsShowingHistory)
         {
             await ResumeSelectedDownloadAsync();
             return;
         }
 
-        if (_hfGrid?.SelectedItem is not UiRow row) return;
+        if (_modelsPage.SelectedHuggingFaceRow is not { } row) return;
         var file = row.Data.Deserialize<HuggingFaceFile>()!;
         await StartHuggingFaceDownloadAsync(file);
     }
 
     private async Task StartHuggingFaceDownloadAsync(HuggingFaceFile file)
     {
-        await RunAsync("Starting download...", async () =>
-        {
-            var job = await _huggingFace!.StartDownloadAsync(file, _settings);
-            await RefreshJobsAsync();
-            await RefreshOverviewAsync();
-            await ShowDownloadHistoryAsync(job.Id);
-            RunBackground(() => MonitorDownloadAsync(job.Id), "Download monitor failed");
-            SetStatus($"Download started: {file.Name} ({job.Id})");
-        });
+        var huggingFace = AppServices.HuggingFace;
+        Require(huggingFace);
+        await _coreServices.HuggingFaceServices.HuggingFaceDownloadApplication.StartAsync(file, _settings, HuggingFaceDownloadActions(huggingFace!));
     }
 
-    private async void DownloadHfRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(async () =>
-        {
-            if ((sender as FrameworkElement)?.Tag is not UiRow row || !row.B1) return;
-            var file = row.Data.Deserialize<HuggingFaceFile>();
-            if (file is not null) await StartHuggingFaceDownloadAsync(file);
-        });
-    }
+    private HuggingFaceDownloadApplicationActions HuggingFaceDownloadActions(HuggingFaceService huggingFace)
+        => new(
+            RunAsync,
+            async (file, settings) => await huggingFace.StartDownloadAsync(file, settings),
+            RefreshJobsAsync,
+            RefreshOverviewAsync,
+            ShowDownloadHistoryAsync,
+            jobId => RunBackground(() => MonitorDownloadAsync(jobId), "Download monitor failed"),
+            SetStatus);
 
-    private void OpenHuggingFaceModelCardRow_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as FrameworkElement)?.Tag is not UiRow row) return;
-        OpenHuggingFaceModelCard(HuggingFaceRepoFromSearchRow(row));
-    }
-
-    private void OpenHuggingFaceModelCard(string repo)
-    {
-        if (!HuggingFaceService.TryCreateModelCardUrl(repo, out var url))
-        {
-            SetStatus("The selected row does not contain a valid Hugging Face repository.");
-            return;
-        }
-
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        SetStatus($"Opened Hugging Face model card: {repo}");
-    }
-
-    private static string HuggingFaceRepoFromSearchRow(UiRow row)
-    {
-        try { return row.Data.Deserialize<HuggingFaceFile>()?.Repo ?? row.C1; }
-        catch { return row.C1; }
-    }
+    private HuggingFaceModelCardApplicationActions HuggingFaceModelCardActions()
+        => new(
+            _coreServices.App.ShellIntegration.OpenUrl,
+            SetStatus);
 }

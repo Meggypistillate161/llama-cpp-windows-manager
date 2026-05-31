@@ -1,23 +1,22 @@
-using System.Threading;
 using System.Windows;
 
 namespace LocalLlmConsole;
 
 public partial class App : System.Windows.Application
 {
-    private Mutex? _singleInstanceMutex;
-    private bool _ownsSingleInstanceMutex;
+    private const string SingleInstanceMutexName = @"Local\llama.cpp-console-single-instance";
+
+    private readonly SingleInstanceApplicationService _singleInstance = new(SingleInstanceApplicationService.AcquireMutexLease);
+    private readonly DialogService _dialogs = new(ThemedMessageBox.Show);
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        _singleInstanceMutex = new Mutex(true, @"Local\llama.cpp-console-single-instance", out var isFirstInstance);
-        if (!isFirstInstance)
+        if (!_singleInstance.TryAcquire(SingleInstanceMutexName))
         {
-            ThemedMessageBox.Show("llama.cpp Windows Manager is already running.", "llama.cpp Windows Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+            _dialogs.Notify(null, "llama.cpp Windows Manager is already running.", "llama.cpp Windows Manager", MessageBoxImage.Information);
             Shutdown();
             return;
         }
-        _ownsSingleInstanceMutex = true;
 
         base.OnStartup(e);
         var window = new MainWindow();
@@ -26,8 +25,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        if (_ownsSingleInstanceMutex) _singleInstanceMutex?.ReleaseMutex();
-        _singleInstanceMutex?.Dispose();
+        _singleInstance.Dispose();
         base.OnExit(e);
     }
 }

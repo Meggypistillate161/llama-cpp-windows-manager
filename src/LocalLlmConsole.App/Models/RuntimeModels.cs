@@ -78,6 +78,7 @@ public sealed record RuntimeLaunchRequest
     public string JinjaMode { get; init; } = "auto";
     public string VisionMode { get; init; } = "auto";
     public string? VisionProjectorPath { get; init; }
+    public bool VisionProjectorEmbedded { get; init; }
     public int VisionImageMinTokens { get; init; }
     public int VisionImageMaxTokens { get; init; }
     public string MmapMode { get; init; } = "auto";
@@ -98,6 +99,7 @@ public sealed record RuntimeLaunchRequest
     public double RopeFreqScale { get; init; }
     public string SpeculativeType { get; init; } = "none";
     public string? SpecDraftModelPath { get; init; }
+    public string? MtpHeadPath { get; init; }
     public int SpecDraftGpuLayers { get; init; } = -1;
     public int SpecDraftMinTokens { get; init; }
     public int SpecDraftMaxTokens { get; init; }

@@ -41,6 +41,54 @@ public sealed partial class ReleaseHardeningTests
         Assert.DoesNotContain(jobs, job => job.Id == "job-0");
     }
 
+
+    [Fact]
+    public async Task StateStoreReadsSingleJobById()
+    {
+        var root = CreateTempRoot();
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var now = DateTimeOffset.UtcNow;
+        var job = new JobRecord(
+            "job-single",
+            "test",
+            JobStatus.Running,
+            "{}",
+            Path.Combine(root, "logs", "job-single.log"),
+            now,
+            now);
+
+        await store.UpsertJobAsync(job);
+
+        Assert.Equal(job, await store.GetJobAsync(job.Id));
+        Assert.Null(await store.GetJobAsync("missing"));
+    }
+
+
+    [Fact]
+    public async Task JobEngineValidatesStatusTransitionsAgainstStoredJobState()
+    {
+        var root = CreateTempRoot();
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var jobs = new JobEngine(store, Path.Combine(root, "logs"));
+        var job = await jobs.CreateAsync("test", "{}", TestContext.Current.CancellationToken);
+
+        await jobs.UpdateAsync(job, JobStatus.Running, """{"step":1}""", TestContext.Current.CancellationToken);
+        await jobs.UpdateAsync(job, JobStatus.Completed, """{"step":2}""", TestContext.Current.CancellationToken);
+        var invalid = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => jobs.UpdateAsync(job, JobStatus.Running, """{"step":3}""", TestContext.Current.CancellationToken));
+        var stored = await store.GetJobAsync(job.Id);
+
+        Assert.Contains("Completed -> Running", invalid.Message, StringComparison.Ordinal);
+        Assert.NotNull(stored);
+        Assert.Equal(JobStatus.Completed, stored.Status);
+        Assert.Equal("""{"step":2}""", stored.PayloadJson);
+        Assert.True(JobEngine.IsValidStatusTransition(JobStatus.Failed, JobStatus.Queued));
+        Assert.False(JobEngine.IsValidStatusTransition(JobStatus.Completed, JobStatus.Running));
+    }
+
+
     [Fact]
     public async Task StateStoreRecordsSchemaMigrationsIdempotently()
     {
@@ -102,7 +150,7 @@ public sealed partial class ReleaseHardeningTests
         await store.SaveAppSettingsAsync(settings);
         var loaded = await store.GetAppSettingsAsync(root);
 
-        Assert.Equal("lan", loaded.ModelAccessMode);
+        Assert.Equal("both", loaded.ModelAccessMode);
         Assert.Equal("0.0.0.0", loaded.Host);
         Assert.Equal("test-key", loaded.ModelApiKey);
     }
@@ -118,6 +166,7 @@ public sealed partial class ReleaseHardeningTests
         var settings = AppSettings.CreateDefault(root) with
         {
             DeleteRuntimeSourceAfterSuccessfulBuild = false,
+            AutoSaveOpenCodeOnLaunchSettingsSave = false,
             CudaPackagePreference = "compatibility"
         };
 
@@ -125,6 +174,7 @@ public sealed partial class ReleaseHardeningTests
         var loaded = await store.GetAppSettingsAsync(root);
 
         Assert.False(loaded.DeleteRuntimeSourceAfterSuccessfulBuild);
+        Assert.False(loaded.AutoSaveOpenCodeOnLaunchSettingsSave);
         Assert.Equal("compatibility", loaded.CudaPackagePreference);
     }
 
@@ -195,7 +245,7 @@ public sealed partial class ReleaseHardeningTests
 
 
     [Fact]
-    public async Task StateStoreMigratesOnlyLegacyModelLaunchDefaults()
+    public async Task StateStorePreservesCurrentAppLaunchValuesThatMatchLegacyDefaults()
     {
         var root = CreateTempRoot();
         await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
@@ -214,6 +264,55 @@ public sealed partial class ReleaseHardeningTests
             VisionImageMaxTokens = 1024
         });
 
+        var loaded = await store.GetAppSettingsAsync(root);
+
+        Assert.Equal(0, loaded.ContextSize);
+        Assert.Equal(0, loaded.GpuLayers);
+        Assert.Equal(2048, loaded.BatchSize);
+        Assert.Equal("f16", loaded.CacheTypeK);
+        Assert.Equal("f16", loaded.CacheTypeV);
+        Assert.Equal(0.8, loaded.Temperature);
+        Assert.Equal(256, loaded.MicroBatchSize);
+        Assert.Equal(256, loaded.VisionImageMinTokens);
+        Assert.Equal(1024, loaded.VisionImageMaxTokens);
+    }
+
+
+    [Fact]
+    public async Task StateStoreMigratesOnlyLegacyAppLaunchDefaults()
+    {
+        var root = CreateTempRoot();
+        var databasePath = Path.Combine(root, "state", "local-llm-console.db");
+        await using var store = new StateStore(databasePath);
+        await store.InitializeAsync();
+
+        await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            foreach (var (key, value) in new (string Key, object Value)[]
+            {
+                ("contextSize", 0),
+                ("gpuLayers", 0),
+                ("batchSize", 2048),
+                ("cacheTypeK", "f16"),
+                ("cacheTypeV", "f16"),
+                ("temperature", 0.8),
+                ("microBatchSize", 256)
+            })
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+INSERT INTO settings (key, value_json, updated_at)
+VALUES ($key, $value_json, $updated_at)
+ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at;
+""";
+                command.Parameters.AddWithValue("$key", key);
+                command.Parameters.AddWithValue("$value_json", System.Text.Json.JsonSerializer.Serialize(value, value.GetType()));
+                command.Parameters.AddWithValue("$updated_at", DateTimeOffset.UtcNow.ToString("O"));
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+        }
+
         var migrated = await store.GetAppSettingsAsync(root);
 
         Assert.Equal(131_072, migrated.ContextSize);
@@ -223,13 +322,13 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("q8_0", migrated.CacheTypeV);
         Assert.Equal(0.65, migrated.Temperature);
         Assert.Equal(256, migrated.MicroBatchSize);
-        Assert.Equal(256, migrated.VisionImageMinTokens);
-        Assert.Equal(1024, migrated.VisionImageMaxTokens);
+        Assert.Equal(0, migrated.VisionImageMinTokens);
+        Assert.Equal(0, migrated.VisionImageMaxTokens);
     }
 
 
     [Fact]
-    public async Task StateStoreMigratesLegacySavedModelLaunchDefaults()
+    public async Task StateStorePreservesCurrentModelLaunchValuesThatMatchLegacyDefaults()
     {
         var root = CreateTempRoot();
         await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
@@ -256,6 +355,69 @@ public sealed partial class ReleaseHardeningTests
             VisionImageMaxTokens = 1024
         }));
 
+        var loaded = await store.GetModelLaunchSettingsAsync("model-1");
+
+        Assert.NotNull(loaded);
+        Assert.Equal(0, loaded.ContextSize);
+        Assert.Equal(0, loaded.GpuLayers);
+        Assert.Equal(2048, loaded.BatchSize);
+        Assert.Equal("f16", loaded.CacheTypeK);
+        Assert.Equal("f16", loaded.CacheTypeV);
+        Assert.Equal(0.8, loaded.Temperature);
+        Assert.Equal(256, loaded.MicroBatchSize);
+        Assert.Equal(256, loaded.VisionImageMinTokens);
+        Assert.Equal(1024, loaded.VisionImageMaxTokens);
+    }
+
+
+    [Fact]
+    public async Task StateStoreMigratesLegacySavedModelLaunchDefaults()
+    {
+        var root = CreateTempRoot();
+        var databasePath = Path.Combine(root, "state", "local-llm-console.db");
+        await using var store = new StateStore(databasePath);
+        await store.InitializeAsync();
+        var now = DateTimeOffset.UtcNow;
+        await store.UpsertModelAsync(new ModelRecord(
+            "model-1",
+            "Test Model",
+            Path.Combine(root, "models", "test.gguf"),
+            OwnershipKind.External,
+            "{}",
+            now));
+        var legacySettings = ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with
+        {
+            ContextSize = 0,
+            GpuLayers = 0,
+            BatchSize = 2048,
+            CacheTypeK = "f16",
+            CacheTypeV = "f16",
+            Temperature = 0.8,
+            MicroBatchSize = 256,
+            VisionImageMinTokens = 256,
+            VisionImageMaxTokens = 1024
+        });
+        var legacyJson = System.Text.Json.JsonSerializer.SerializeToNode(legacySettings)!.AsObject();
+        legacyJson.Remove(nameof(ModelLaunchSettings.SpeculativeType));
+        legacyJson.Remove(nameof(ModelLaunchSettings.SpecDraftModelPath));
+        legacyJson.Remove(nameof(ModelLaunchSettings.MtpHeadPath));
+        legacyJson.Remove(nameof(ModelLaunchSettings.VisionImageMinTokens));
+        legacyJson.Remove(nameof(ModelLaunchSettings.VisionImageMaxTokens));
+
+        await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+INSERT INTO model_launch_settings (model_id, settings_json, updated_at)
+VALUES ($model_id, $settings_json, $updated_at);
+""";
+            command.Parameters.AddWithValue("$model_id", "model-1");
+            command.Parameters.AddWithValue("$settings_json", legacyJson.ToJsonString());
+            command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
         var migrated = await store.GetModelLaunchSettingsAsync("model-1");
 
         Assert.NotNull(migrated);
@@ -266,8 +428,8 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("q8_0", migrated.CacheTypeV);
         Assert.Equal(0.65, migrated.Temperature);
         Assert.Equal(256, migrated.MicroBatchSize);
-        Assert.Equal(256, migrated.VisionImageMinTokens);
-        Assert.Equal(1024, migrated.VisionImageMaxTokens);
+        Assert.Equal(0, migrated.VisionImageMinTokens);
+        Assert.Equal(0, migrated.VisionImageMaxTokens);
     }
 
 

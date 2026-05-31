@@ -1,6 +1,6 @@
 # Release Readiness Checklist
 
-Last updated: 2026-05-27
+Last updated: 2026-05-31
 
 ## Automated Gate
 
@@ -14,30 +14,44 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
+The same source-level gate can be run through the local wrapper, with packaging
+included when the machine has Inno Setup and any required signing certificate:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
+```
+
 Trusted signed release builds use:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1 -CertificateThumbprint "<cert-thumbprint>" -RequireSigned
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -CertificateThumbprint "<cert-thumbprint>" -RequireSigned
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller -CertificateThumbprint "<cert-thumbprint>" -RequireSigned
 ```
 
 ## Release Gate
 
 - Publish `dist\LlamaCppWindowsManager-win-x64.zip` and `dist\LlamaCppWindowsManager-win-x64\LlamaCppWindowsManager.exe` from a clean checkout.
-- Build `dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe` from the published app with Inno Setup 6.
+- Build `dist\installer\LlamaCppWindowsManager-Setup-1.1.3-win-x64.exe` from the published app with Inno Setup 6.
 - Confirm the publish folder contains no `.pdb` files.
 - Confirm the portable zip, published executable, and installer each have a matching `.sha256` companion file. For signed builds, generate the companion file after signing.
+- Confirm signed installer builds fail before compilation if `-SkipPublish`
+  points at an unsigned published executable.
 - Confirm the portable zip contains both `LlamaCppWindowsManager.exe` and the legacy `LlamaCppConsole.exe` alias for renamed-app updates.
 - Confirm fresh installer default path is `D:\LlamaCppWindowsManager` when `D:` exists, `%LocalAppData%\Programs\LlamaCppWindowsManager` when it does not, and that the setup wizard still allows the user to change the install folder.
 - Confirm the installer detects an existing install and reuses its install directory on update or repair.
 - Confirm the final installer page can launch `LlamaCppWindowsManager.exe`.
+- Confirm fresh installer setups offer Start with Windows checked by default,
+  and that Settings can disable or re-enable the current-user startup entry.
 - Confirm installer update/repair does not delete `data`, models, runtimes, cache, logs, or state.
 - Confirm uninstall keeps `data` by default and only deletes it when the user explicitly chooses to delete app data.
 - Launch the published app on a clean Windows user profile with no repository checkout.
 - Confirm only one app instance can run in the same user session.
 - Confirm Runtime Downloads can check the upstream official llama.cpp release feed and list the official prebuilt packages for CUDA Windows, CUDA WSL, Vulkan Windows, Vulkan WSL, Intel Arc SYCL Windows, Intel Arc SYCL WSL, CPU Windows, and CPU WSL.
-- Confirm installing an official prebuilt runtime does not require Git, CMake, Visual Studio Build Tools, WSL build tools, or source checkout.
-- Confirm installed official prebuilt runtimes are registered, can be selected per model, and show update/delete state on the Runtime Downloads page.
+- Confirm Runtime Downloads can check the Atomic TurboQuant binary feed, install the Windows CUDA package when published, and show the WSL CUDA row as not published until a matching Linux/WSL asset exists.
+- Confirm installing a prebuilt runtime does not require Git, CMake, Visual Studio Build Tools, WSL build tools, or source checkout.
+- Confirm installed prebuilt runtimes are registered, can be selected per model, and show update/delete state on the Runtime Downloads page.
 - Confirm official prebuilt CUDA downloads include the matching runtime DLL/archive companion when upstream publishes one.
 - Confirm source-built official runtimes can be reconciled with matching prebuilt runtimes by local runtime fingerprint.
 - Confirm WSL is installed and the configured Ubuntu distro exists when a WSL runtime or WSL source build is selected, or missing prerequisites are reported clearly.
@@ -59,15 +73,24 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm the Ubuntu row shows Install Ubuntu when Ubuntu is missing and Update Ubuntu when Ubuntu exists.
 - Confirm the local service binds only to `127.0.0.1`.
 - Confirm model serving defaults to local-only `127.0.0.1`.
-- Confirm Settings model access maps Local only to `127.0.0.1` and LAN access to `0.0.0.0`.
-- Confirm Settings LAN access changes only the model runtime bind host, not the app-local control service.
+- Confirm Settings LAN exposure maps Local only to loopback, Gateway LAN only to the router listener, Direct models LAN only to runtime hosts, and Gateway + direct LAN to both serving surfaces.
+- Confirm Settings LAN exposure changes only model-serving endpoints, not the app-local control service.
+- Confirm the Overview Loaded Model Sessions grid shows an auto-load gateway
+  router row with endpoint, policy, LAN exposure, and current direct-session
+  count.
 - Confirm the Settings API key Generate action creates a new model API key.
+- Confirm Settings > OpenCode > Sync on launch save controls whether saved
+  launch settings and saved variants automatically rewrite OpenCode local model
+  entries.
 - Confirm Settings shows cache size at the top and Clear removes cache contents only when downloads/builds are idle.
 - Confirm local-only model serving launches with an API key and client requests include that key.
 - Confirm the persisted model API key is protected at rest for the current Windows user.
 - Confirm ports outside `1..65535` are rejected on Settings save.
-- Confirm model serving cannot launch without a strong model API key in either local-only or LAN mode.
-- Confirm a LAN client can reach the OpenAI-compatible `/v1` endpoint only after Windows Firewall and WSL networking allow the configured model port.
+- Confirm model serving cannot launch without a strong model API key in any
+  local-only or LAN exposure mode.
+- Confirm a LAN client can reach the selected OpenAI-compatible `/v1` serving
+  surface only after Windows Firewall and WSL networking allow the configured
+  gateway or direct model port.
 - Confirm the WPF app is the only user-facing surface; no web UI is launched.
 - Confirm no command prompt windows remain open for app services.
 - Confirm app-local API requests without the session token return `401`.
@@ -80,10 +103,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 - Confirm imported external model deletion removes only app registration files.
 - Confirm app-owned downloaded model deletion cannot escape the configured model root.
 - Confirm vision-capable model settings persist image min/max token allowances and launch `llama-server` with `--image-min-tokens` / `--image-max-tokens` when set.
+- Confirm per-model Vision head choices persist for auto-detect,
+  embedded/model-bundled, and explicit external projectors; explicit projectors
+  launch with `--mmproj`, embedded choices omit `--mmproj`, and synced OpenCode
+  entries are marked vision-capable when the launch settings prove support.
+- Confirm per-model MTP head choices persist separately from Vision head,
+  `Spec type = mtp` launches with `--mtp-head`, and draft-* speculative modes
+  continue to use the upstream `--model-draft` path.
 - Confirm downloaded runtime source and build deletion cannot escape the configured runtimes folder.
 - Confirm successful builds from downloaded runtime sources delete the source folder when Settings > Runtime > Delete source after build is `Yes`, and preserve it when set to `No`.
 - Confirm multiple models can be loaded at the same time on different saved model ports when hardware capacity allows it.
-- Confirm OpenCode local model entries keep separate providers/endpoints for concurrently served models and remain stable across app restarts.
+- Confirm the auto-load gateway serves one shared `/v1` endpoint, launches the
+  requested model on its saved direct port, and proxies requests to that direct
+  endpoint.
+- Confirm Gateway policy > Prefer keeping loaded models preserves existing
+  sessions and blocks/warns clearly when VRAM admission predicts that another
+  GPU model is unsafe.
+- Confirm Gateway policy > Single active model unloads other direct sessions
+  before loading the requested model.
+- Confirm OpenCode local model entries can use either the shared gateway
+  provider or direct per-model providers/endpoints, remain stable across app
+  restarts, and include vision support when launch settings prove it.
 - Confirm CPU-only Ubuntu/WSL llama.cpp source build path succeeds after Install CPU Tools, or fails early if Git/CMake/compiler tools are still missing inside Ubuntu.
 - Confirm CUDA Ubuntu/WSL llama.cpp source build path succeeds after Install CUDA on supported NVIDIA hardware, or fails early with a clear driver/toolkit error.
 - Confirm Vulkan Ubuntu/WSL llama.cpp source build path succeeds after Install Vulkan on supported WSL Vulkan hardware, or fails early with a clear driver/toolkit error.
@@ -101,22 +141,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 
 ## Latest Local Verification
 
-Last verified on 2026-05-27:
+Current local check on 2026-05-31:
 
 ```powershell
-dotnet test LocalLlmConsole.sln -c Release --no-restore --filter "FullyQualifiedName~ReleaseHardeningTests"
-dotnet format LocalLlmConsole.sln --verify-no-changes --no-restore --verbosity minimal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipPublish
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-app.ps1
+D:\LLM\.dotnet-sdk-8\dotnet.exe format LocalLlmConsole.sln --verify-no-changes --verbosity minimal
+git diff --check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1
 ```
 
-Result: release-hardening tests passed, formatting was clean, the portable zip
-was produced with both executable names, and the v1.1.2 installer compiled.
+Result: Release app build succeeded with zero warnings, release-hardening tests
+passed (`421/421`), formatting was clean, no vulnerable packages were found,
+the diff had no whitespace errors, and publish/installer artifact checks passed
+locally. The next release notes draft is tracked in
+`docs/GITHUB_RELEASE_NEXT.md`.
 
 ## Manual Clean-Machine Test
 
 1. Start from a clean Windows VM.
-2. Install `dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe`.
+2. Install `dist\installer\LlamaCppWindowsManager-Setup-1.1.3-win-x64.exe`.
 3. Confirm the installer prefers `D:\LlamaCppWindowsManager` when `D:` exists and allows choosing a different folder before install.
 4. Confirm the launch-after-install option opens the app.
 5. Confirm first launch creates `data\models`, `data\runtimes`, `data\cache`, `data\state`, and `data\logs` beside the exe when the install folder is writable.
@@ -136,10 +181,13 @@ was produced with both executable names, and the v1.1.2 installer compiled.
 19. Change the selected distro and validate missing-distro errors.
 20. Download a small GGUF, interrupt the app mid-download, relaunch, and verify job recovery.
 21. Load two small models on different saved ports and confirm both endpoints remain reachable.
-22. Import an external model folder, delete the registration, and verify GGUF files remain.
-23. Add a downloaded app-owned model, delete it, and verify only app-owned paths are removed.
-24. Verify the OpenCode page remains optional and does not block core workflows.
-25. Verify app update checks can reach the GitHub release feed, and that update install works from a copied portable exe folder.
+22. Enable Gateway LAN only, confirm a LAN client can reach the gateway but not
+    direct model ports; then enable Direct models LAN only and confirm the
+    inverse.
+23. Import an external model folder, delete the registration, and verify GGUF files remain.
+24. Add a downloaded app-owned model, delete it, and verify only app-owned paths are removed.
+25. Verify the OpenCode page remains optional and does not block core workflows.
+26. Verify app update checks can reach the GitHub release feed, and that update install works from a copied portable exe folder.
 
 ## Release Blockers
 

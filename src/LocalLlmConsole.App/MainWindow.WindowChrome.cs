@@ -35,35 +35,33 @@ public partial class MainWindow
 
     private void MinimizeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ShouldHideToTrayOnMinimize())
+        var plan = _coreServices.Ui.TrayWindowState.BuildMinimizePlan(_settings.MinimizeBehavior);
+        if (plan.Action == TrayMinimizeAction.TrayOnly)
         {
             MinimizeToTray();
             return;
         }
 
-        if (ShouldShowTrayWithTaskbarOnMinimize())
-        {
+        if (plan.Action == TrayMinimizeAction.TrayAndTaskbar)
             ShowTrayIcon();
-            SetStatus("Minimized to taskbar and tray.");
-        }
         else
-        {
             HideTrayIcon();
-        }
-
+        if (!string.IsNullOrWhiteSpace(plan.StatusMessage))
+            SetStatus(plan.StatusMessage);
         WindowState = WindowState.Minimized;
     }
 
     private void Window_StateChanged(object? sender, EventArgs e)
     {
         ApplyWindowWorkAreaBounds();
-        if (WindowState == WindowState.Minimized && ShouldHideToTrayOnMinimize())
+        var action = _coreServices.Ui.TrayWindowState.WindowStateChangedAction(WindowState, _settings.MinimizeBehavior);
+        if (action == TrayMinimizeAction.TrayOnly)
         {
             MinimizeToTray();
             return;
         }
 
-        if (WindowState == WindowState.Minimized && ShouldShowTrayWithTaskbarOnMinimize())
+        if (action == TrayMinimizeAction.TrayAndTaskbar)
         {
             ShowTrayIcon();
             return;
@@ -131,10 +129,6 @@ public partial class MainWindow
         _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(RestoreFromTray);
     }
 
-    private bool ShouldHideToTrayOnMinimize() => AppPreferenceService.MinimizeBehavior(_settings.MinimizeBehavior) == "trayOnly";
-
-    private bool ShouldShowTrayWithTaskbarOnMinimize() => AppPreferenceService.MinimizeBehavior(_settings.MinimizeBehavior) == "trayAndTaskbar";
-
     private static System.Drawing.Icon CreateTrayIcon()
     {
         try
@@ -166,39 +160,32 @@ public partial class MainWindow
 
     private void MinimizeToTray()
     {
-        if (_minimizingToTray) return;
-        _minimizingToTray = true;
+        var plan = _coreServices.Ui.TrayWindowState.BeginHideToTray(WindowState);
+        if (!plan.ShouldApply) return;
         try
         {
-            if (WindowState != WindowState.Minimized)
-                _windowStateBeforeTray = WindowState;
-            else if (_windowStateBeforeTray == WindowState.Minimized)
-                _windowStateBeforeTray = WindowState.Normal;
-
             ShowTrayIcon();
             ShowInTaskbar = false;
             Hide();
 
-            if (!_shownTrayHint)
-            {
-                _shownTrayHint = true;
+            if (plan.ShouldShowHint)
                 _trayIcon?.ShowBalloonTip(1800, AppDisplayName, "Still running in the tray. Double-click the tray icon to restore.", Forms.ToolTipIcon.Info);
-            }
 
-            SetStatus("Minimized to tray.");
+            SetStatus(plan.StatusMessage);
         }
         finally
         {
-            _minimizingToTray = false;
+            _coreServices.Ui.TrayWindowState.CompleteHideToTray();
         }
     }
 
     private void RestoreFromTray()
     {
+        var plan = _coreServices.Ui.TrayWindowState.BuildRestorePlan();
         HideTrayIcon();
         ShowInTaskbar = true;
         Show();
-        WindowState = _windowStateBeforeTray == WindowState.Maximized ? WindowState.Maximized : WindowState.Normal;
+        WindowState = plan.RestoreState;
         Activate();
     }
 

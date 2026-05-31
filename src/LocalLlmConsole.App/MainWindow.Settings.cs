@@ -17,282 +17,70 @@ public partial class MainWindow
     private void ShowSettings()
     {
         SetPage("Settings", "Application preferences.");
-        _viewModel.Settings.ReplaceRows(SettingsPageRows());
+        _viewModel.Settings.ReplaceRows(_coreServices.App.SettingsPageDefinitions.BuildRows(_settings));
 
-        var root = Dock();
-        var toolbar = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition());
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var saveButton = Button("Save Settings", async (_, _) => await SaveSettingsAsync());
-        Grid.SetColumn(saveButton, 0);
-        toolbar.Children.Add(saveButton);
-
-        var themeBar = Bar();
-        themeBar.Margin = new Thickness(0);
-        themeBar.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
-        themeBar.Children.Add(new TextBlock
-        {
-            Text = "Theme",
-            Foreground = (System.Windows.Media.Brush)WpfApplication.Current.Resources["TextMuted"],
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 6)
-        });
-        _themeCombo = LaunchCombo("system", "light", "dark");
-        _themeCombo.Width = 110;
-        _themeCombo.SelectedItem = AppPreferenceService.ThemeMode(_settings.ThemeMode);
-        _themeCombo.SelectionChanged += (_, _) =>
-        {
-            var mode = AppPreferenceService.ThemeMode(ComboValue(_themeCombo));
-            _settings = _settings with { ThemeMode = mode };
-            ApplyTheme(mode);
-            SetStatus("Theme preview applied. Save settings to keep it.");
-        };
-        themeBar.Children.Add(_themeCombo);
-        Grid.SetColumn(themeBar, 2);
-        toolbar.Children.Add(themeBar);
-        System.Windows.Controls.DockPanel.SetDock(toolbar, System.Windows.Controls.Dock.Top);
-        root.Children.Add(toolbar);
-
-        var grid = new DataGrid { IsReadOnly = false, ItemsSource = _viewModel.Settings.Rows, RowHeight = 38 };
-        PolishGrid(grid);
-        var textStyle = (Style)WpfApplication.Current.Resources["GridCellText"];
-        grid.Columns.Add(new DataGridTextColumn { Header = "Group", Binding = new WpfBinding(nameof(EditableSettingRow.Group)), IsReadOnly = true, ElementStyle = textStyle, MinWidth = 80, Width = new DataGridLength(120), CanUserResize = true });
-        grid.Columns.Add(new DataGridTextColumn { Header = "Setting", Binding = new WpfBinding(nameof(EditableSettingRow.Label)), IsReadOnly = true, ElementStyle = textStyle, MinWidth = 110, Width = new DataGridLength(180), CanUserResize = true });
-        grid.Columns.Add(SettingsValueColumn());
-        grid.Columns.Add(SettingsActionsColumn());
-        root.Children.Add(GridFrame(grid));
-        PageHost.Content = root;
+        var page = SettingsPageFactory.Create(new SettingsPageRequest(
+            _viewModel.Settings.Rows,
+            _settings.ThemeMode,
+            _pageControllers.Settings.Build(),
+            ButtonToolTip));
+        _settingsPage.Apply(page);
+        PageHost.Content = page.Root;
     }
 
-    private IReadOnlyList<SettingRowDefinition> SettingsPageRows() =>
-    [
-        new("Storage", "Cache", "cache", $"{DisplayFormatService.BytesOrZero(CacheMaintenanceService.Size(_settings.CacheRoot))} in {_settings.CacheRoot}", "readonly", Action: "Clear"),
-        new("Window", "Minimize behavior", "minimizeBehavior", AppPreferenceService.MinimizeBehaviorLabel(_settings.MinimizeBehavior), "choice", AppPreferenceService.MinimizeBehaviorOptions()),
-        new("Model", "Auto unload idle min", "autoUnloadIdleMinutes", _settings.AutoUnloadIdleMinutes.ToString()),
-        new("Runtime", "Delete source after build", "deleteRuntimeSourceAfterSuccessfulBuild", AppPreferenceService.YesNoLabel(_settings.DeleteRuntimeSourceAfterSuccessfulBuild), "choice", AppPreferenceService.YesNoOptions()),
-        new("Network", "Model access", "modelAccessMode", AppPreferenceService.ModelAccessModeLabel(_settings.ModelAccessMode), "choice", AppPreferenceService.ModelAccessModeOptions()),
-        new("Network", "Port", "port", _settings.Port.ToString()),
-        new("Network", "API key", "modelApiKey", _settings.ModelApiKey, "secret", Action: "Generate"),
-        new("Logs", "Max log file MB", "maxLogFileSizeMb", _settings.MaxLogFileSizeMb.ToString())
-    ];
-
-    private async void SettingsRowAction_Click(object sender, RoutedEventArgs e)
+    private void PreviewSettingsTheme()
     {
-        await RunEventAsync(async () =>
-        {
-            if (sender is not WpfButton { Tag: EditableSettingRow row }) return;
-            if (row.Key == "cache")
-            {
-                await ClearCacheAsync();
-                return;
-            }
-
-            if (row.Key == "modelApiKey")
-            {
-                row.Value = ApiSecurity.GenerateHexToken(32);
-                SetStatus("New model API key generated. Save settings to apply it.");
-                return;
-            }
-
-            if (row.Type != "folder") return;
-            var folder = PickFolder(row.Value);
-            if (folder is null) return;
-
-            row.Value = Path.GetFullPath(folder);
-            SetStatus($"{row.Label} folder selected. Save settings to apply it.");
-        });
+        var mode = AppPreferenceService.ThemeMode(_settingsPage.SelectedThemeValue);
+        _settings = _settings with { ThemeMode = mode };
+        ApplyTheme(mode);
+        SetStatus("Theme preview applied. Save settings to keep it.");
     }
 
-    private async void SettingsRevealSecretRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(() =>
-        {
-            if (sender is not WpfButton { Tag: EditableSettingRow { Type: "secret" } row }) return Task.CompletedTask;
-            row.IsSecretVisible = !row.IsSecretVisible;
-            SetStatus(row.IsSecretVisible ? "API key is visible in Settings." : "API key hidden.");
-            return Task.CompletedTask;
-        });
-    }
+    private async Task RunSettingsRowActionAsync(EditableSettingRow? row)
+        => await _coreServices.App.SettingsRowActions.RunActionAsync(row, SettingsRowActionActions());
 
-    private async void SettingsCopySecretRow_Click(object sender, RoutedEventArgs e)
-    {
-        await RunEventAsync(() =>
-        {
-            if (sender is not WpfButton { Tag: EditableSettingRow { Type: "secret" } row }) return Task.CompletedTask;
-            var value = (row.Value ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                SetStatus("No API key is available to copy.");
-                return Task.CompletedTask;
-            }
+    private void ToggleSettingsSecret(EditableSettingRow? row)
+        => _coreServices.App.SettingsRowActions.ToggleSecret(row, SetStatus);
 
-            System.Windows.Clipboard.SetText(value);
-            SetStatus("API key copied to clipboard.");
-            return Task.CompletedTask;
-        });
-    }
+    private void CopySettingsSecret(EditableSettingRow? row)
+        => _coreServices.App.SettingsRowActions.CopySecret(row, SettingsSecretCopyActions());
+
+    private SettingsRowActionApplicationActions SettingsRowActionActions()
+        => new(ClearCacheAsync, PickFolder, SetStatus);
+
+    private SettingsSecretCopyApplicationActions SettingsSecretCopyActions()
+        => new(_coreServices.App.Clipboard.SetText, SetStatus);
+
+    private static EditableSettingRow? SettingRowFromSender(object sender)
+        => sender is WpfButton { Tag: EditableSettingRow row } ? row : null;
 
     private async Task ClearCacheAsync()
     {
-        if (!CacheMaintenanceService.IsSafeCacheRoot(_workspaceRoot, _settings.CacheRoot))
-        {
-            ThemedMessageBox.Show(this, "The cache folder is outside the app workspace or contains a junction/symlink, so it was not cleared.", "Clear cache", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var runningCacheJobs = _huggingFace?.ActiveDownloadCount > 0 || await HasRunningCacheJobAsync();
-        if (runningCacheJobs)
-        {
-            ThemedMessageBox.Show(this, "Downloads or runtime builds are still using the cache. Stop or finish them before clearing it.", "Clear cache", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var size = await Task.Run(() => CacheMaintenanceService.Size(_settings.CacheRoot));
-        if (size <= 0)
-        {
-            ThemedMessageBox.Show(this, "No cache files are currently stored.", "Clear cache", MessageBoxButton.OK, MessageBoxImage.Information);
-            if (_viewModel.CurrentPage == "Settings") ShowSettings();
-            return;
-        }
-
-        if (ThemedMessageBox.Show(this, $"Clear {DisplayFormatService.BytesOrZero(size)} from the app cache?\n\nRuntime sources, temporary build files, partial update downloads, and other disposable cache data will be removed.", "Clear cache", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-            return;
-
-        await RunAsync("Clearing cache...", async () =>
-        {
-            await Task.Run(() => CacheMaintenanceService.ClearSafeCacheRoot(_workspaceRoot, _settings.CacheRoot));
-            SetStatus($"Cleared cache ({DisplayFormatService.BytesOrZero(size)}).");
-            if (_viewModel.CurrentPage == "Settings") ShowSettings();
-        });
+        var cacheClear = AppServices.CacheClearWorkflow;
+        Require(cacheClear);
+        await _coreServices.App.CacheClearApplication.ClearAsync(_settings, CacheClearActions(cacheClear!));
     }
 
-    private async Task<bool> HasRunningCacheJobAsync()
-    {
-        if (_stateStore is null) return false;
-        var jobs = await _stateStore.ListJobsAsync();
-        return jobs.Any(job =>
-            job.Status is JobStatus.Queued or JobStatus.Running or JobStatus.Paused
-            && (job.Kind.Contains("runtime", StringComparison.OrdinalIgnoreCase)
-                || job.Kind.Contains("download", StringComparison.OrdinalIgnoreCase)));
-    }
+    private CacheClearApplicationActions CacheClearActions(CacheClearWorkflowService cacheClear)
+        => new(
+            async (settings, hasActiveDownloads, token) => await cacheClear.PlanAsync(settings, hasActiveDownloads, token),
+            async (settings, token) => await cacheClear.ClearAsync(settings, token),
+            () => AppServices.HuggingFace?.ActiveDownloadCount > 0,
+            () => _viewModel.CurrentPage == "Settings",
+            ShowSettings,
+            NotifyCacheClearPrompt,
+            ConfirmCacheClearPrompt,
+            RunAsync,
+            SetStatus);
 
-    private static DataGridTemplateColumn SettingsValueColumn()
-    {
-        var root = new FrameworkElementFactory(typeof(Grid));
+    private bool ConfirmCacheClearPrompt(CacheClearPrompt prompt)
+        => _coreServices.App.Dialogs.Confirm(this, prompt.Message, prompt.Title, CacheClearMessageBoxImage(prompt.Kind));
 
-        var textBox = new FrameworkElementFactory(typeof(WpfTextBox));
-        textBox.SetBinding(WpfTextBox.TextProperty, new WpfBinding(nameof(EditableSettingRow.Value))
-        {
-            Mode = BindingMode.TwoWay,
-            UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-        });
-        textBox.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Stretch);
-        textBox.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 1, 6, 1));
-        var textBoxStyle = new Style(typeof(WpfTextBox), (Style)WpfApplication.Current.Resources[typeof(WpfTextBox)]);
-        var hideTextBoxForChoice = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "choice" };
-        hideTextBoxForChoice.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        textBoxStyle.Triggers.Add(hideTextBoxForChoice);
-        var hideTextBoxForReadonly = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "readonly" };
-        hideTextBoxForReadonly.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        textBoxStyle.Triggers.Add(hideTextBoxForReadonly);
-        var hideTextBoxForSecret = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "secret" };
-        hideTextBoxForSecret.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        textBoxStyle.Triggers.Add(hideTextBoxForSecret);
-        textBox.SetValue(FrameworkElement.StyleProperty, textBoxStyle);
-        root.AppendChild(textBox);
+    private void NotifyCacheClearPrompt(CacheClearPrompt prompt)
+        => _coreServices.App.Dialogs.Notify(this, prompt.Message, prompt.Title, CacheClearMessageBoxImage(prompt.Kind));
 
-        var combo = new FrameworkElementFactory(typeof(WpfComboBox));
-        combo.SetBinding(ItemsControl.ItemsSourceProperty, new WpfBinding(nameof(EditableSettingRow.Options)));
-        combo.SetBinding(WpfComboBox.SelectedItemProperty, new WpfBinding(nameof(EditableSettingRow.Value))
-        {
-            Mode = BindingMode.TwoWay,
-            UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-        });
-        combo.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Stretch);
-        combo.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 1, 6, 1));
-        var comboStyle = new Style(typeof(WpfComboBox), (Style)WpfApplication.Current.Resources[typeof(WpfComboBox)]);
-        comboStyle.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        var showComboForChoice = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "choice" };
-        showComboForChoice.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible));
-        comboStyle.Triggers.Add(showComboForChoice);
-        combo.SetValue(FrameworkElement.StyleProperty, comboStyle);
-        root.AppendChild(combo);
-
-        var textBlock = new FrameworkElementFactory(typeof(TextBlock));
-        textBlock.SetBinding(TextBlock.TextProperty, new WpfBinding(nameof(EditableSettingRow.DisplayValue)));
-        textBlock.SetValue(TextBlock.ForegroundProperty, WpfApplication.Current.Resources["TextSoft"]);
-        textBlock.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
-        textBlock.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
-        textBlock.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 1, 6, 1));
-        var textBlockStyle = new Style(typeof(TextBlock));
-        textBlockStyle.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        var showTextBlockForReadonly = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "readonly" };
-        showTextBlockForReadonly.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible));
-        textBlockStyle.Triggers.Add(showTextBlockForReadonly);
-        var showTextBlockForSecret = new DataTrigger { Binding = new WpfBinding(nameof(EditableSettingRow.Type)), Value = "secret" };
-        showTextBlockForSecret.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible));
-        textBlockStyle.Triggers.Add(showTextBlockForSecret);
-        textBlock.SetValue(FrameworkElement.StyleProperty, textBlockStyle);
-        root.AppendChild(textBlock);
-
-        return new DataGridTemplateColumn
-        {
-            Header = "Value",
-            Width = new DataGridLength(1, DataGridLengthUnitType.Star),
-            MinWidth = 240,
-            CanUserResize = true,
-            CellTemplate = new DataTemplate { VisualTree = root }
-        };
-    }
-
-    private DataGridTemplateColumn SettingsActionsColumn()
-    {
-        var root = new FrameworkElementFactory(typeof(System.Windows.Controls.Primitives.UniformGrid));
-        root.SetValue(System.Windows.Controls.Primitives.UniformGrid.ColumnsProperty, 3);
-        root.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 4, 0));
-
-        var revealButton = SettingsActionButton(nameof(EditableSettingRow.RevealAction), nameof(EditableSettingRow.CanRevealAction), nameof(EditableSettingRow.RevealToolTip));
-        revealButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsRevealSecretRow_Click));
-        root.AppendChild(revealButton);
-
-        var copyButton = SettingsActionButton(nameof(EditableSettingRow.CopyAction), nameof(EditableSettingRow.CanCopyAction), nameof(EditableSettingRow.CopyToolTip));
-        copyButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsCopySecretRow_Click));
-        root.AppendChild(copyButton);
-
-        var primaryButton = SettingsActionButton(nameof(EditableSettingRow.Action), nameof(EditableSettingRow.CanAction), nameof(EditableSettingRow.ActionToolTip));
-        primaryButton.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(SettingsRowAction_Click));
-        root.AppendChild(primaryButton);
-
-        return new DataGridTemplateColumn
-        {
-            Header = "Action",
-            Width = new DataGridLength(1.35, DataGridLengthUnitType.Star),
-            MinWidth = 208,
-            CanUserResize = true,
-            CellTemplate = new DataTemplate { VisualTree = root }
-        };
-    }
-
-    private static FrameworkElementFactory SettingsActionButton(string contentBinding, string enabledBinding, string tooltipBinding)
-    {
-        var button = new FrameworkElementFactory(typeof(WpfButton));
-        button.SetBinding(ContentControl.ContentProperty, new WpfBinding(contentBinding));
-        button.SetBinding(UIElement.IsEnabledProperty, new WpfBinding(enabledBinding));
-        button.SetBinding(FrameworkElement.ToolTipProperty, new WpfBinding(tooltipBinding));
-        button.SetBinding(FrameworkElement.TagProperty, new WpfBinding("."));
-        button.SetValue(ToolTipService.ShowOnDisabledProperty, true);
-        button.SetValue(FrameworkElement.MinHeightProperty, 22.0);
-        button.SetValue(System.Windows.Controls.Control.PaddingProperty, new Thickness(7, 1, 7, 2));
-        button.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 1, 2, 1));
-        button.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Stretch);
-        var style = new Style(typeof(WpfButton), (Style)WpfApplication.Current.Resources[typeof(WpfButton)]);
-        var emptyTrigger = new Trigger { Property = ContentControl.ContentProperty, Value = "" };
-        emptyTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        style.Triggers.Add(emptyTrigger);
-        button.SetValue(FrameworkElement.StyleProperty, style);
-        return button;
-    }
+    private static MessageBoxImage CacheClearMessageBoxImage(CacheClearPromptKind kind)
+        => kind == CacheClearPromptKind.Warning
+            ? MessageBoxImage.Warning
+            : MessageBoxImage.Information;
 }

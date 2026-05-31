@@ -16,218 +16,54 @@ public partial class MainWindow
 {
     private async Task RecoverActiveRuntimeSessionAsync()
     {
-        if (_stateStore is null) return;
-        var sessions = await _activeSessions.ReadAllAsync();
-        if (sessions.Count == 0) return;
+        var appServices = AppServices;
+        var modelLookup = appServices.ModelLookupApplication;
 
-        try
-        {
-            var models = await _stateStore.ListModelsAsync();
-            var runtimes = await _stateStore.ListRuntimesAsync();
-            foreach (var session in sessions)
-            {
-                if (string.IsNullOrWhiteSpace(session.ModelId) || string.IsNullOrWhiteSpace(session.RuntimeId))
-                    continue;
-
-                var model = models.FirstOrDefault(item => string.Equals(item.Id, session.ModelId, StringComparison.OrdinalIgnoreCase));
-                var runtime = runtimes.FirstOrDefault(item => string.Equals(item.Id, session.RuntimeId, StringComparison.OrdinalIgnoreCase));
-                if (model is null || runtime is null) continue;
-                if (runtime.Mode == RuntimeMode.Wsl && string.IsNullOrWhiteSpace(session.ProcessMarker)) continue;
-                if (runtime.Mode == RuntimeMode.Native && !NativeRuntimeProcessMatches(session, runtime)) continue;
-
-                var servedModels = await RuntimeServedModelsAsync(session.LaunchSettings);
-                if (servedModels.Count > 0 && !servedModels.Any(served => RuntimeEndpointService.ServedModelMatches(model, served)))
-                    continue;
-
-                var alive = await RuntimeEndpointAliveAsync(session.LaunchSettings);
-                if (!alive && !await RuntimeEndpointRespondingAsync(session.LaunchSettings))
-                    continue;
-
-                var state = alive ? LlamaRuntimeState.Loaded : LlamaRuntimeState.Loading;
-                var snapshot = _sessions.AttachExisting(
-                    runtime,
-                    model,
-                    session.LaunchSettings,
-                    session.LogPath,
-                    state,
-                    session.ProcessMarker,
-                    session.SessionId,
-                    session.StartedAt,
-                    session.ProcessId);
-                if (session.IsSelected)
-                    _sessions.SelectSession(snapshot.SessionId);
-                if (state == LlamaRuntimeState.Loading)
-                {
-                    if (session.IsSelected)
-                        StartModelLoadingTimer(model.Id, model.Name, session.LaunchSettings);
-                    StartRuntimeReadinessMonitor(model, session.LaunchSettings);
-                }
-            }
-
-            _activeRuntimeSettings = _sessions.ActiveSettings;
-            if (!_sessions.HasRunningSessions)
-            {
-                ClearActiveRuntimeSession();
-                return;
-            }
-
-            await SaveActiveRuntimeSessionsAsync();
-            var active = _sessions.SelectedSnapshot();
-            if (active is not null)
-                SetStatus($"Recovered {_sessions.Snapshots().Count} loaded model session(s). Selected {active.ModelName} at {active.EndpointDisplay}.");
-            StartRuntimeDashboardRefreshTimer();
-            await RefreshOverviewModelSelectorAsync();
-            await RefreshRuntimeMetricsAsync();
-        }
-        catch
-        {
-            ClearActiveRuntimeSession();
-        }
-    }
-
-    private static bool NativeRuntimeProcessMatches(ActiveRuntimeSession session, RuntimeRecord runtime)
-    {
-        if (session.ProcessId <= 0) return false;
-        try
-        {
-            using var process = Process.GetProcessById(session.ProcessId);
-            if (process.HasExited) return false;
-            var processPath = process.MainModule?.FileName;
-            if (string.IsNullOrWhiteSpace(processPath)) return false;
-            return string.Equals(Path.GetFullPath(processPath), Path.GetFullPath(runtime.ExecutablePath), StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task MarkRuntimeLoadedIfReadyAsync(AppSettings launchSettings)
-    {
-        if (_llama.State != LlamaRuntimeState.Loading || !_llama.IsRunning) return;
-        if (!await RuntimeEndpointAliveAsync(launchSettings)) return;
-
-        if (!_llama.MarkLoadedIfRunning()) return;
-        var modelName = await ActiveModelDisplayNameAsync(_llama.ActiveModelId);
-        if (string.Equals(_modelLoadingModelId, _llama.ActiveModelId, StringComparison.OrdinalIgnoreCase))
-            StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: modelName);
-        await SaveActiveRuntimeSessionsAsync();
-        SetStatus($"Loaded {modelName} at {RuntimeEndpointService.EndpointDisplay(launchSettings)}.");
-        UpdateModelActionButtons();
-        UpdateOverviewModelActions();
+        await _coreServices.Runtime.RuntimeSessionRecoveryApplication.RecoverAsync(
+            new RuntimeSessionRecoveryApplicationActions(
+                modelLookup.ListAsync,
+                appServices.StateStore.ListRuntimesAsync,
+                async (settings, token) => await _coreServices.Runtime.RuntimeEndpointProbe.ServedModelsAsync(settings, token),
+                async (settings, token) => await _coreServices.Runtime.RuntimeEndpointProbe.IsAliveAsync(settings, token),
+                async (settings, token) => await _coreServices.Runtime.RuntimeEndpointProbe.IsRespondingAsync(settings, token),
+                (model, settings) => StartModelLoadingTimer(model.Id, model.Name, settings),
+                StartRuntimeReadinessMonitor,
+                settings => _activeRuntimeSettings = settings,
+                SetStatus,
+                StartRuntimeDashboardRefreshTimer,
+                RefreshOverviewModelSelectorAsync,
+                RefreshRuntimeMetricsAsync));
     }
 
     private async Task MarkLoadedSessionsIfReadyAsync()
     {
-        var removed = _sessions.RemoveFailedOrStopped();
-        removed += await _sessions.StopUnavailableRecoveredSessionsAsync(async session =>
-            await RuntimeEndpointRespondingAsync(session.LaunchSettings));
-        if (removed > 0)
-        {
-            _activeRuntimeSettings = _sessions.ActiveSettings;
-            await SaveActiveRuntimeSessionsAsync();
-            _viewModel.Overview.ReplaceSessions(_sessions.Snapshots());
-            _loadedSessionsGrid?.Items.Refresh();
-            UpdateModelActionButtons();
-            UpdateOverviewModelActions();
-        }
-
-        var changed = false;
-        foreach (var session in _sessions.Snapshots().Where(session => session is { IsRunning: true, Status: LoadedModelSessionStatus.Loading }))
-        {
-            if (!await RuntimeEndpointAliveAsync(session.LaunchSettings)) continue;
-            if (!_sessions.MarkModelLoadedIfRunning(session.ModelId)) continue;
-
-            changed = true;
-            if (string.Equals(_modelLoadingModelId, session.ModelId, StringComparison.OrdinalIgnoreCase))
-                StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: session.ModelName);
-        }
-
-        if (!changed) return;
-        await SaveActiveRuntimeSessionsAsync();
-        _viewModel.Overview.ReplaceSessions(_sessions.Snapshots());
-        _loadedSessionsGrid?.Items.Refresh();
-        UpdateModelActionButtons();
-        UpdateOverviewModelActions();
+        await _coreServices.Runtime.RuntimeSessionReconciliationApplication.ReconcileAsync(
+            new RuntimeSessionReconciliationApplicationActions(
+                session => _coreServices.Runtime.RuntimeEndpointProbe.IsRespondingAsync(session.LaunchSettings),
+                session => _coreServices.Runtime.RuntimeEndpointProbe.IsAliveAsync(session.LaunchSettings),
+                settings => _activeRuntimeSettings = settings,
+                transition =>
+                {
+                    if (_coreServices.Models.ModelRuntimeStatus.IsLoadingModel(transition.ModelId))
+                        StopModelLoadingTimer(showLoadedDuration: true, loadedModelName: transition.ModelName);
+                },
+                RefreshOverviewSessionRows,
+                UpdateOverviewModelActions));
     }
 
-    private async Task<bool> RuntimeEndpointAliveAsync(AppSettings launchSettings)
+    private void RefreshOverviewSessionRows()
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(1.5) };
-        foreach (var path in new[] { "health", "v1/models" })
-        {
-            try
-            {
-                using var request = RuntimeEndpointService.RuntimeGetRequest($"{RuntimeEndpointService.LocalServerBaseUrl(launchSettings)}/{path}", launchSettings);
-                using var response = await client.SendAsync(request);
-                if (response.IsSuccessStatusCode) return true;
-            }
-            catch
-            {
-                // Try the next endpoint.
-            }
-        }
+        var selectedSessionId = _overviewPage.SelectedLoadedSessionId;
+        var sessions = _sessions.Snapshots();
+        if (!_viewModel.Overview.ReplaceSessionsIfChanged(sessions, OverviewGatewayRoutingStatus(sessions)))
+            return;
 
-        return false;
-    }
-
-    private async Task<bool> RuntimeEndpointRespondingAsync(AppSettings launchSettings)
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(1.5) };
-        foreach (var path in new[] { "health", "v1/models", "metrics" })
-        {
-            try
-            {
-                using var request = RuntimeEndpointService.RuntimeGetRequest($"{RuntimeEndpointService.LocalServerBaseUrl(launchSettings)}/{path}", launchSettings);
-                using var _ = await client.SendAsync(request);
-                return true;
-            }
-            catch
-            {
-                // Try the next endpoint.
-            }
-        }
-
-        return false;
-    }
-
-    private async Task<IReadOnlyList<string>> RuntimeServedModelsAsync(AppSettings launchSettings)
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(1.5) };
-        try
-        {
-            var json = await RuntimeEndpointService.RuntimeGetStringAsync(client, $"{RuntimeEndpointService.LocalOpenAiBaseUrl(launchSettings)}/models", launchSettings);
-            return RuntimeEndpointService.ExtractServedModelIds(json).ToArray();
-        }
-        catch
-        {
-            return [];
-        }
+        using var selectionScope = _coreServices.Ui.SelectionReentrancy.SuppressLoadedSessionSelection();
+        _overviewPage.RestoreLoadedSessionSelection(selectedSessionId, _viewModel.Overview.SessionRows);
     }
 
     private async Task SaveActiveRuntimeSessionsAsync()
-    {
-        var sessions = _sessions.Snapshots()
-            .Where(session => session.IsRunning)
-            .Select(session => new ActiveRuntimeSession(
-                session.ModelId,
-                session.RuntimeId,
-                session.LaunchSettings,
-                session.LogPath,
-                session.StartedAt,
-                session.ProcessMarker,
-                session.ProcessId,
-                session.SessionId,
-                session.IsSelected))
-            .ToArray();
-        if (sessions.Length == 0)
-        {
-            ClearActiveRuntimeSession();
-            return;
-        }
+        => await _coreServices.Runtime.RuntimeSessionPersistence.SaveRunningAsync();
 
-        await _activeSessions.SaveAllAsync(sessions);
-    }
-
-    private void ClearActiveRuntimeSession() => _activeSessions.Clear();
+    private void ClearActiveRuntimeSession() => _coreServices.Runtime.RuntimeSessionPersistence.Clear();
 }

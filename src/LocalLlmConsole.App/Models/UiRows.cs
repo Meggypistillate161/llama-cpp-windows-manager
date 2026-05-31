@@ -38,6 +38,7 @@ public sealed class EditableSettingRow : INotifyPropertyChanged
     public string Group { get; set; } = "";
     public string Label { get; set; } = "";
     public string Key { get; set; } = "";
+    public string ToolTip { get; set; } = "";
     public string Type
     {
         get => _type;

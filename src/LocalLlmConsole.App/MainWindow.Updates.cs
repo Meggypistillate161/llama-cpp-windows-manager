@@ -17,38 +17,20 @@ public partial class MainWindow
     private void ShowUpdates()
     {
         SetPage("Updates", "App updates from GitHub releases.");
-        var root = Stack();
-        root.Margin = new Thickness(16);
+        var page = UpdatesPageFactory.Create(new UpdatesPageRequest(
+            _viewModel.Updates,
+            new UpdatesPageActions(
+                ShowUpdatesPrimaryActionAsync,
+                () => OpenUrl(AppUpdateService.RepositoryUrl))));
+        PageHost.Content = page.Content;
+    }
 
-        var actions = Bar();
-        actions.Children.Add(Button(_viewModel.Updates.ActionText, async (_, _) =>
-        {
-            if (_viewModel.Updates.LatestUpdate is { IsAvailable: true } available)
-                await InstallAppUpdateAsync(available, confirm: true);
-            else
-                await CheckForAppUpdatesAsync(manual: true);
-        }));
-        actions.Children.Add(Button("Open GitHub", (_, _) => OpenUrl(AppUpdateService.RepositoryUrl)));
-        root.Children.Add(actions);
-
-        root.Children.Add(FramedSection("Update Status", new TextBlock
-        {
-            Text = _viewModel.Updates.StatusDetails,
-            Foreground = (System.Windows.Media.Brush)WpfApplication.Current.Resources["TextSoft"],
-            TextWrapping = TextWrapping.Wrap
-        }));
-
-        if (_viewModel.Updates.LatestUpdate is { IsAvailable: true })
-        {
-            root.Children.Add(FramedSection("Latest Release", new TextBlock
-            {
-                Text = _viewModel.Updates.LatestReleaseText,
-                Foreground = (System.Windows.Media.Brush)WpfApplication.Current.Resources["TextSoft"],
-                TextWrapping = TextWrapping.Wrap
-            }));
-        }
-
-        PageHost.Content = root;
+    private async Task ShowUpdatesPrimaryActionAsync()
+    {
+        if (_viewModel.Updates.LatestUpdate is { IsAvailable: true } available)
+            await InstallAppUpdateAsync(available, confirm: true);
+        else
+            await CheckForAppUpdatesAsync(manual: true);
     }
 
     private async Task CheckForAppUpdatesOnStartupAsync()
@@ -64,77 +46,67 @@ public partial class MainWindow
 
     private async Task CheckForAppUpdatesAsync(bool manual)
     {
-        if (_viewModel.Updates.CheckInFlight) return;
-        _viewModel.Updates.CheckInFlight = true;
-        try
-        {
-            SetStatus("Checking for app updates...");
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var latestUpdate = await _appUpdates.CheckLatestAsync(cts.Token);
-            _viewModel.Updates.SetLatestUpdate(latestUpdate);
-            UpdateAppUpdateNavigation();
-            if (_viewModel.CurrentPage == "Updates") ShowUpdates();
-
-            if (latestUpdate.IsAvailable)
-            {
-                SetStatus($"Update available: {latestUpdate.LatestVersion}.");
-                if (manual)
-                {
-                    var message = $"Update {latestUpdate.CurrentVersion} -> {latestUpdate.LatestVersion} is available.\n\n{latestUpdate.ReleaseName}\n\nInstall it now?";
-                    if (ThemedMessageBox.Show(this, message, "Install update", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                        await InstallAppUpdateAsync(latestUpdate, confirm: false);
-                }
-            }
-            else
-            {
-                SetStatus("No app updates available.");
-                if (manual)
-                    ThemedMessageBox.Show(this, $"No updates are available.\n\nCurrent version: {latestUpdate.CurrentVersion}", "Check for updates", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Update check failed: {ex.Message}");
-            if (manual)
-                ThemedMessageBox.Show(this, ex.Message, "Update check failed", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _viewModel.Updates.CheckInFlight = false;
-        }
+        await _coreServices.App.AppUpdateApplication.CheckForUpdatesAsync(manual, AppUpdateCheckActions());
     }
 
     private async Task InstallAppUpdateAsync(AppUpdateInfo update, bool confirm)
     {
-        if (!update.IsAvailable) return;
-        if (string.IsNullOrWhiteSpace(update.AssetUrl))
-        {
-            ThemedMessageBox.Show(this, "The latest GitHub release does not include a portable Windows app asset.", "Install update", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        if (confirm && ThemedMessageBox.Show(this, $"Install {update.LatestVersion} now?\n\nThe app will close, replace the executable, and restart.", "Install update", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
-            return;
-
-        await RunAsync("Preparing app update...", async () =>
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            var plan = await _appUpdates.StageInstallAsync(update, _workspaceRoot, Environment.ProcessPath, cts.Token);
-            _appUpdates.StartInstaller(plan, Environment.ProcessId);
-            SetStatus("Update staged. Closing to install...");
-        });
-
-        Close();
+        await _coreServices.App.AppUpdateApplication.InstallAsync(
+            new AppUpdateInstallApplicationRequest(update, confirm, Environment.ProcessPath, Environment.ProcessId),
+            AppUpdateInstallActions());
     }
+
+    private AppUpdateCheckApplicationActions AppUpdateCheckActions()
+        => new(
+            () => _viewModel.Updates.CheckInFlight,
+            inFlight => _viewModel.Updates.CheckInFlight = inFlight,
+            async (isManual, token) => await _coreServices.App.AppUpdateWorkflow.CheckLatestAsync(isManual, token),
+            _viewModel.Updates.SetLatestUpdate,
+            UpdateAppUpdateNavigation,
+            () => _viewModel.CurrentPage == "Updates",
+            ShowUpdates,
+            SetStatus,
+            ConfirmAppUpdatePrompt,
+            NotifyAppUpdatePrompt,
+            InstallAppUpdateAsync);
+
+    private AppUpdateInstallApplicationActions AppUpdateInstallActions()
+        => new(
+            ConfirmAppUpdatePrompt,
+            NotifyAppUpdatePrompt,
+            RunAsync,
+            async (requestedUpdate, processPath, processId, token) =>
+                await _coreServices.App.AppUpdateWorkflow.StageAndStartInstallAsync(requestedUpdate, processPath, processId, token),
+            SetStatus,
+            Close);
+
+    private bool ConfirmAppUpdatePrompt(AppUpdateApplicationPrompt prompt)
+        => _coreServices.App.Dialogs.Confirm(
+            this,
+            prompt.Message,
+            prompt.Title,
+            MessageBoxImageFor(prompt.Kind));
+
+    private void NotifyAppUpdatePrompt(AppUpdateApplicationPrompt prompt)
+        => _coreServices.App.Dialogs.Notify(
+            this,
+            prompt.Message,
+            prompt.Title,
+            MessageBoxImageFor(prompt.Kind));
+
+    private static MessageBoxImage MessageBoxImageFor(AppUpdateApplicationPromptKind kind)
+        => kind == AppUpdateApplicationPromptKind.Warning
+            ? MessageBoxImage.Warning
+            : MessageBoxImage.Information;
 
     private async Task ShowCompletedAppUpdateNoticeAsync()
     {
-        var notice = await AppUpdateService.TryConsumeInstalledNoticeAsync(_workspaceRoot);
+        var notice = await _coreServices.App.AppUpdateWorkflow.TryConsumeInstalledNoticeAsync();
         if (notice is null) return;
-        ThemedMessageBox.Show(
+        _coreServices.App.Dialogs.Notify(
             this,
             $"Updated to {notice.Version}.\n\n{notice.ReleaseName}\n\n{DisplayFormatService.TrimForDisplay(notice.ReleaseNotes, 2600)}",
             "Update installed",
-            MessageBoxButton.OK,
             MessageBoxImage.Information);
     }
 

@@ -5,6 +5,9 @@ public sealed class ModelGridRow
     public required string Name { get; init; }
     public required string Quant { get; init; }
     public required string Size { get; init; }
+    public string BaseModel { get; init; } = "";
+    public string Port { get; init; } = "";
+    public string Description { get; init; } = "";
     public string OpenFolderAction { get; init; } = "Open Folder";
     public string DeleteAction { get; init; } = "Delete";
     public string OpenFolderToolTip { get; init; } = "Open the folder containing this model file.";

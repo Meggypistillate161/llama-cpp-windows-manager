@@ -5,12 +5,14 @@
 /runtimes/
 /cache/
 /state/
+/diagnostics/
 bin/
 obj/
 /dist/
 /workspace/
 *.log
 *.tmp
+*.dmp
 *.part
 *.partial
 *.download

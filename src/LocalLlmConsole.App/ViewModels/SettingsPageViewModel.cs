@@ -9,7 +9,8 @@ public sealed record SettingRowDefinition(
     string Value,
     string Type = "text",
     IEnumerable<string>? Options = null,
-    string Action = "");
+    string Action = "",
+    string ToolTip = "");
 
 public sealed class SettingsPageViewModel
 {
@@ -46,6 +47,9 @@ public sealed class SettingsPageViewModel
             Key = definition.Key,
             Type = definition.Type,
             Value = definition.Value,
+            ToolTip = string.IsNullOrWhiteSpace(definition.ToolTip)
+                ? $"{definition.Label} setting."
+                : definition.ToolTip,
             Action = definition.Action,
             ActionToolTip = SettingActionToolTip(definition),
             CanAction = !string.IsNullOrWhiteSpace(definition.Action)

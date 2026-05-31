@@ -27,7 +27,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -C
 The setup executable is written to:
 
 ```text
-dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe
+dist\installer\LlamaCppWindowsManager-Setup-1.1.3-win-x64.exe
 ```
 
 ## Install Behavior
@@ -39,6 +39,7 @@ dist\installer\LlamaCppWindowsManager-Setup-1.1.2-win-x64.exe
 - Updating an older install removes the old `LlamaCppConsole.exe` app binary while preserving the existing install directory and `data` folder.
 - The final installer page includes a launch-after-install option.
 - The installer creates a Start Menu shortcut and offers an optional Desktop shortcut.
+- Fresh installs offer a checked-by-default Start with Windows task. The app also exposes the same startup preference in Settings.
 
 ## Data Preservation
 

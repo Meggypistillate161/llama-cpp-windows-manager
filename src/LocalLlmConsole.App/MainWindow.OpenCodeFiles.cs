@@ -16,77 +16,62 @@ public partial class MainWindow
 {
     private async Task DetectOpenCodeFilesAsync()
     {
-        await RunAsync("Detecting OpenCode files...", async () =>
-        {
-            Require(_openCode);
-            _openCodeFiles = _openCode!.DetectFileSet();
-            _openCode.SaveFileSet(_openCodeFiles);
-            await RefreshOpenCodeAsync();
-            SetStatus("OpenCode files detected.");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeFileSetApplication.DetectAsync(OpenCodeFileSetTransitionActions());
     }
 
     private async Task ChooseOpenCodeConfigFileAsync()
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Choose OpenCode config",
-            Filter = "OpenCode config|opencode.json;opencode.jsonc|JSON files|*.json;*.jsonc|All files|*.*",
-            CheckFileExists = false,
-            AddExtension = true,
-            DefaultExt = ".jsonc",
-            FileName = Path.GetFileName(_openCodeFiles.ConfigPath)
-        };
-        var initialDirectory = Path.GetDirectoryName(_openCodeFiles.ConfigPath);
-        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
-            dialog.InitialDirectory = initialDirectory;
-        if (dialog.ShowDialog(this) != true) return;
-
-        await RunAsync("Setting OpenCode config...", async () =>
-        {
-            Require(_openCode);
-            _openCodeFiles = _openCodeFiles with { ConfigPath = Path.GetFullPath(dialog.FileName) };
-            _openCode!.SaveFileSet(_openCodeFiles);
-            await RefreshOpenCodeAsync();
-            SetStatus($"OpenCode config set to {_openCodeFiles.ConfigPath}");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeFileSetApplication.ChooseConfigPathAsync(
+            _openCodeFileSet.Current,
+            OpenCodeFileSetPickerActions());
     }
 
     private async Task ChooseOpenCodeAgentsFolderAsync()
     {
-        var folder = PickFolder(_openCodeFiles.AgentsDirectory);
-        if (folder is null) return;
-        await RunAsync("Setting OpenCode agents folder...", async () =>
-        {
-            Require(_openCode);
-            _openCodeFiles = _openCodeFiles with { AgentsDirectory = Path.GetFullPath(folder) };
-            _openCode!.SaveFileSet(_openCodeFiles);
-            await RefreshOpenCodeAsync();
-            SetStatus($"OpenCode agents folder set to {_openCodeFiles.AgentsDirectory}");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeFileSetApplication.ChooseAgentsDirectoryAsync(
+            _openCodeFileSet.Current,
+            OpenCodeFileSetPickerActions());
     }
 
     private async Task CreateMissingOpenCodeFilesAsync()
     {
-        await RunAsync("Creating OpenCode files...", async () =>
-        {
-            Require(_openCode);
-            _openCode!.EnsureFiles(_openCodeFiles);
-            _openCode.SaveFileSet(_openCodeFiles);
-            await RefreshOpenCodeAsync();
-            SetStatus("OpenCode config and agents folder are ready.");
-        });
+        await _coreServices.OpenCodeServices.OpenCodeFileSetApplication.EnsureAsync(
+            _openCodeFileSet.Current,
+            OpenCodeFileSetTransitionActions());
     }
 
     private void OpenOpenCodeConfigFolder()
     {
-        var folder = Path.GetDirectoryName(_openCodeFiles.ConfigPath);
-        if (!string.IsNullOrWhiteSpace(folder)) OpenFolder(folder);
+        _coreServices.OpenCodeServices.OpenCodeFileSetApplication.OpenConfigFolder(
+            _openCodeFileSet.Current,
+            new OpenCodeConfigFolderOpenActions(OpenFolder));
     }
 
-    private void UpdateOpenCodePathText()
-    {
-        if (_openCodeConfigPathText is not null) _openCodeConfigPathText.Text = _openCodeFiles.ConfigPath;
-        if (_openCodeAgentsPathText is not null) _openCodeAgentsPathText.Text = _openCodeFiles.AgentsDirectory;
-    }
+    private OpenCodePathApplicationActions OpenCodePathActions()
+        => new(
+            path =>
+            {
+                if (_openCodePage.ConfigPathText is not null)
+                    _openCodePage.ConfigPathText.Text = path;
+            },
+            path =>
+            {
+                if (_openCodePage.AgentsPathText is not null)
+                    _openCodePage.AgentsPathText.Text = path;
+            });
+
+    private OpenCodeFileSetApplicationActions OpenCodeFileSetActions()
+        => new(
+            files => _openCodeFileSet.Set(files),
+            () => RefreshOpenCodeAsync(),
+            SetStatus);
+
+    private OpenCodeFileSetTransitionActions OpenCodeFileSetTransitionActions()
+        => new(RunAsync, OpenCodeFileSetActions());
+
+    private OpenCodeFileSetPickerActions OpenCodeFileSetPickerActions()
+        => new(
+            plan => _coreServices.App.FileSystemDialogs.PickOpenCodeConfigFile(plan, this),
+            PickFolder,
+            OpenCodeFileSetTransitionActions());
 }

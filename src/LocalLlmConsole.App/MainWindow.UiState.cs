@@ -29,9 +29,7 @@ public partial class MainWindow
             return false;
         }
 
-        _pageHostEnabledBeforeBusy = PageHost.IsEnabled;
-        PageHost.IsEnabled = false;
-        System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+        _coreServices.Ui.UiBusyState.Begin(PageHost.IsEnabled, SetPageHostEnabled, SetWaitCursor);
         SetStatus(message);
         return true;
     }
@@ -39,8 +37,7 @@ public partial class MainWindow
     private void EndUiBusy()
     {
         if (!_viewModel.EndBusy()) return;
-        PageHost.IsEnabled = _pageHostEnabledBeforeBusy;
-        System.Windows.Input.Mouse.OverrideCursor = null;
+        _coreServices.Ui.UiBusyState.End(SetPageHostEnabled, SetWaitCursor);
     }
 
     private void SetStatus(string text)
@@ -51,4 +48,12 @@ public partial class MainWindow
     }
 
     private static void Require(object? value) { if (value is null) throw new InvalidOperationException("App is still starting."); }
+
+    private void SetPageHostEnabled(bool enabled)
+        => PageHost.IsEnabled = enabled;
+
+    private static void SetWaitCursor(bool enabled)
+        => System.Windows.Input.Mouse.OverrideCursor = enabled
+            ? System.Windows.Input.Cursors.Wait
+            : null;
 }

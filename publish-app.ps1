@@ -9,6 +9,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Remove-DistPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path,
+    [Parameter(Mandatory = $true)]
+    [string] $Label,
+    [switch] $Recurse
+  )
+
+  $full = [System.IO.Path]::GetFullPath($Path)
+  $root = $DistRoot.TrimEnd('\', '/')
+  if (-not $full.StartsWith($root + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove $Label outside the dist folder: $full"
+  }
+  if (-not (Test-Path -LiteralPath $full)) {
+    return
+  }
+
+  $item = Get-Item -LiteralPath $full -Force
+  if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Refusing to remove $Label because it is a symlink or junction: $full"
+  }
+
+  if ($Recurse) {
+    Remove-Item -LiteralPath $full -Recurse -Force
+  } else {
+    Remove-Item -LiteralPath $full -Force
+  }
+}
+
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $Project = Join-Path $AppDir "src\LocalLlmConsole.App\LocalLlmConsole.App.csproj"
 $DistRoot = [System.IO.Path]::GetFullPath((Join-Path $AppDir "dist"))
@@ -41,7 +71,7 @@ if ($Info -match "No SDKs were found") {
 }
 
 if (Test-Path -LiteralPath $PublishDir) {
-  Remove-Item -LiteralPath $PublishDir -Recurse -Force
+  Remove-DistPath -Path $PublishDir -Label "publish folder" -Recurse
 }
 
 & $Dotnet publish $Project `
@@ -87,7 +117,7 @@ Set-Content -LiteralPath $LegacyExeHashPath -Value "$ExeHash  $(Split-Path -Leaf
 
 $ZipPath = Join-Path $DistRoot "LlamaCppWindowsManager-$Runtime.zip"
 if (Test-Path -LiteralPath $ZipPath) {
-  Remove-Item -LiteralPath $ZipPath -Force
+  Remove-DistPath -Path $ZipPath -Label "portable release archive"
 }
 Compress-Archive -Path (Join-Path $PublishDir "*") -DestinationPath $ZipPath -Force
 $ZipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()

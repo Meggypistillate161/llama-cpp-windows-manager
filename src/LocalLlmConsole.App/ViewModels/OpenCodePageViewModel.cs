@@ -8,6 +8,21 @@ public sealed class OpenCodePageViewModel
     public ObservableCollection<ModelRecord> LocalModelChoices { get; } = new();
     public ObservableCollection<OpenCodeAgentEntry> AgentChoices { get; } = new();
 
+    public void ReplaceChoices(OpenCodePageChoices choices)
+    {
+        LocalModelChoices.Clear();
+        foreach (var model in choices.LocalModels)
+            LocalModelChoices.Add(model);
+
+        ModelChoices.Clear();
+        foreach (var model in choices.Models)
+            ModelChoices.Add(model);
+
+        AgentChoices.Clear();
+        foreach (var agent in choices.Agents)
+            AgentChoices.Add(agent);
+    }
+
     public void ReplaceLocalModels(IEnumerable<ModelRecord> models)
     {
         LocalModelChoices.Clear();

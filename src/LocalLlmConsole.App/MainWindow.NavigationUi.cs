@@ -40,7 +40,7 @@ public partial class MainWindow
         SetButtonToolTip(LifetimeNavButton, "Open persisted lifetime token counters.");
         SetButtonToolTip(LogsNavButton, "Open app, runtime, and job logs.");
         SetButtonToolTip(UpdatesNavButton, "Check for app updates from GitHub releases.");
-        SetButtonToolTip(HelpNavButton, "Open first-run setup steps.");
+        SetButtonToolTip(HelpNavButton, "Open first-run setup and app help.");
     }
 
     private static string ButtonToolTip(string text)
@@ -95,6 +95,24 @@ public partial class MainWindow
             "Open Models" => "Open model search, download, and launch settings.",
             "Open Overview" => "Open the model loading dashboard.",
             "Open OpenCode" => "Open OpenCode setup actions.",
+            "First Steps" => "Show first-run setup help.",
+            "Overview" => "Show Overview help.",
+            "Models" => "Show Models help.",
+            "Runtimes" => "Show Runtimes help.",
+            "Settings" => "Show Settings help.",
+            "OpenCode" => "Show OpenCode help.",
+            "Logs & Updates" => "Show logs and updates help.",
+            "Search Models" => "Open Models and focus Hugging Face search.",
+            "Edit Launch Settings" => "Open Models and focus launch settings.",
+            "Gateway Settings" => "Open Settings and show gateway options.",
+            "Windows Tools" => "Open advanced Windows setup actions.",
+            "WSL Tools" => "Open advanced WSL setup actions.",
+            "Runtime Jobs" => "Open Runtimes and focus runtime jobs.",
+            "Add OpenCode Model" => "Open OpenCode and add a local model.",
+            "Open Agents" => "Open OpenCode agent setup actions.",
+            "Open Logs" => "Open log inspection.",
+            "Open Lifetime" => "Open lifetime token counters.",
+            "Check Updates" => "Open app update checks.",
             _ when label.StartsWith("Install ", StringComparison.OrdinalIgnoreCase) => $"Run {label}.",
             _ when label.StartsWith("Delete ", StringComparison.OrdinalIgnoreCase) => $"Run {label}.",
             _ when label.StartsWith("Check", StringComparison.OrdinalIgnoreCase) => label,

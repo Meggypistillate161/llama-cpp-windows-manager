@@ -1,7 +1,7 @@
 #define AppName "llama.cpp Windows Manager"
 #define AppExeName "LlamaCppWindowsManager.exe"
 #ifndef AppVersion
-#define AppVersion "1.1.2"
+#define AppVersion "1.1.3"
 #endif
 #ifndef SourceDir
 #define SourceDir "..\dist\LlamaCppWindowsManager-win-x64"
@@ -47,6 +47,7 @@ VersionInfoProductVersion={#AppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "startup"; Description: "Start with Windows"; GroupDescription: "Startup options:"; Flags: checkedonce
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -61,6 +62,9 @@ Type: files; Name: "{userdesktop}\llama.cpp Console.lnk"
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "LlamaCppWindowsManager"; ValueData: """{app}\{#AppExeName}"""; Flags: uninsdeletevalue; Tasks: startup
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

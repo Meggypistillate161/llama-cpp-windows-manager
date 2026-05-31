@@ -51,6 +51,9 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("build: CUDA", runtimeJob.Related, StringComparison.Ordinal);
         Assert.Equal("loadi", LogFileService.Head(runtimeLog, 5));
         Assert.Equal("56789", LogFileService.Tail(runtimeLog, 5));
+        var bomLog = Path.Combine(logRoot, "bom.log");
+        File.WriteAllText(bomLog, "\u03A9mega", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        Assert.Equal("\u03A9me", LogFileService.Head(bomLog, 3));
         Assert.True(LogFileService.TryValidateWorkspaceLogFile(root, runtimeLog, out var fullPath, out var error));
         Assert.Equal(Path.GetFullPath(runtimeLog), fullPath);
         Assert.Equal("", error);

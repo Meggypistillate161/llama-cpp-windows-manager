@@ -9,6 +9,19 @@ namespace LocalLlmConsole.Tests;
 public sealed partial class ReleaseHardeningTests
 {
     [Fact]
+    public void HuggingFaceRepoMetadataCacheIsBounded()
+    {
+        var service = ReadServicePartialSources("HuggingFaceService");
+
+        Assert.Contains("private const int RepoInfoCacheLimit", service, StringComparison.Ordinal);
+        Assert.Contains("RepoInfoCacheTtl", service, StringComparison.Ordinal);
+        Assert.Contains("CachedRepoInfo", service, StringComparison.Ordinal);
+        Assert.Contains("TrimRepoInfoCache(now)", service, StringComparison.Ordinal);
+        Assert.Contains("_repoInfoCache.TryRemove", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConcurrentDictionary<string, RepoInfo> _repoInfoCache", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ModelCatalogFindsAdjacentDraftModel()
     {
         var root = CreateTempRoot();
@@ -24,6 +37,32 @@ public sealed partial class ReleaseHardeningTests
         var found = ModelCatalogService.FindDraftModel(main);
 
         Assert.Equal(Path.GetFullPath(draft), Path.GetFullPath(found!));
+    }
+
+    [Fact]
+    public async Task ModelCatalogTreatsVisionHeadCompanionsAsProjectorsNotMainModels()
+    {
+        var root = CreateTempRoot();
+        var models = Path.Combine(root, "models");
+        Directory.CreateDirectory(models);
+        var main = Path.Combine(models, "Gemma-main.gguf");
+        var visionHead = Path.Combine(models, "Gemma-mtp-vision-f16.gguf");
+        var draft = Path.Combine(models, "Gemma-MTP-draft.gguf");
+        await File.WriteAllTextAsync(main, "main", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(visionHead, "vision", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(draft, "draft", TestContext.Current.CancellationToken);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+
+        var foundProjector = ModelCatalogService.FindVisionProjector(main);
+        var registered = await catalog.ScanAsync(models);
+        var savedModels = await store.ListModelsAsync();
+
+        Assert.Equal(Path.GetFullPath(visionHead), Path.GetFullPath(foundProjector!));
+        Assert.Equal(1, registered);
+        Assert.DoesNotContain(savedModels, model => string.Equals(model.ModelPath, visionHead, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(savedModels, model => string.Equals(model.ModelPath, draft, StringComparison.OrdinalIgnoreCase));
     }
 
 
@@ -220,6 +259,7 @@ public sealed partial class ReleaseHardeningTests
     {
         var serviceSource = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "HuggingFaceService.Safety.cs"));
         var downloadHistorySource = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.DownloadHistory.cs"));
+        var downloadHistoryWorkflow = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "DownloadHistoryWorkflowService.cs"));
         var registerIndex = serviceSource.IndexOf("await RegisterDownloadedHuggingFaceModelAsync(settings, file, destination, timestamp, recovered, new VisionProjectorDownloadResult(\"\", \"\"));", StringComparison.Ordinal);
         var completedIndex = serviceSource.IndexOf("await _jobs.UpdateAsync(job, JobStatus.Completed, JsonSerializer.Serialize(new DownloadJobPayload(file, destination, completedBytes, completedBytes), JsonOptions), cancellationToken);", StringComparison.Ordinal);
         var projectorIndex = serviceSource.IndexOf("var projector = await TryDownloadVisionProjectorAsync(settings, file, destination, cancellationToken);", StringComparison.Ordinal);
@@ -229,9 +269,15 @@ public sealed partial class ReleaseHardeningTests
         Assert.True(completedIndex > registerIndex);
         Assert.True(projectorIndex > completedIndex);
         Assert.Contains("Optional post-download setup skipped", serviceSource, StringComparison.Ordinal);
-        Assert.Contains("while (_huggingFace?.IsDownloadActive(jobId) == true && !await DownloadJobReachedTerminalStatusAsync(jobId))", downloadHistorySource, StringComparison.Ordinal);
-        Assert.Contains("var refresh = await Dispatcher.InvokeAsync(RefreshCompletedDownloadAsync);", downloadHistorySource, StringComparison.Ordinal);
-        Assert.Contains("await _catalog.ScanAsync(_settings.ModelsRoot);", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("var downloadHistory = AppServices.DownloadHistoryApplication;", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("_coreServices.App.DownloadCompletionApplication.MonitorAsync(", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("new DownloadCompletionApplicationActions(", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("downloadHistory.WaitUntilInactiveOrTerminalAsync(completedJobId, interval)", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Paused or JobStatus.Interrupted", downloadHistoryWorkflow, StringComparison.Ordinal);
+        Assert.Contains("public async Task WaitUntilInactiveOrTerminalAsync(", downloadHistoryWorkflow, StringComparison.Ordinal);
+        Assert.Contains("RunDownloadCompletionOnUiThreadAsync", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("var catalog = ModelServices.Catalog;", downloadHistorySource, StringComparison.Ordinal);
+        Assert.Contains("await catalog.ScanAsync(_settings.ModelsRoot);", downloadHistorySource, StringComparison.Ordinal);
     }
 
 
@@ -274,6 +320,39 @@ public sealed partial class ReleaseHardeningTests
         Assert.False(HuggingFaceService.TryCreateModelCardUrl("https://example.com/owner/repo", out _));
     }
 
+    [Fact]
+    public void HuggingFaceModelCardApplicationServiceOwnsRowParsingOpenAndStatus()
+    {
+        var service = new HuggingFaceModelCardApplicationService();
+        var calls = new List<string>();
+        var file = new HuggingFaceFile("owner/repo", "model.gguf", "model.gguf", "Q4", 1024, 1);
+        var row = new UiRow
+        {
+            C1 = "fallback/repo",
+            Data = System.Text.Json.JsonSerializer.SerializeToNode(file)!.AsObject()
+        };
+        var fallbackRow = new UiRow { C1 = "fallback/repo" };
+
+        HuggingFaceModelCardApplicationActions Actions()
+            => new(
+                url => calls.Add($"open:{url}"),
+                status => calls.Add($"status:{status}"));
+
+        var opened = service.OpenFromRow(row, Actions());
+        var fallback = service.OpenFromRow(fallbackRow, Actions());
+        var blocked = service.Open("https://example.com/owner/repo", Actions());
+
+        Assert.Equal("owner/repo", HuggingFaceModelCardApplicationService.RepoFromSearchRow(row));
+        Assert.Equal("fallback/repo", HuggingFaceModelCardApplicationService.RepoFromSearchRow(fallbackRow));
+        Assert.Equal(HuggingFaceModelCardApplicationOutcome.Opened, opened);
+        Assert.Equal(HuggingFaceModelCardApplicationOutcome.Opened, fallback);
+        Assert.Equal(HuggingFaceModelCardApplicationOutcome.Blocked, blocked);
+        Assert.Contains("open:https://huggingface.co/owner/repo", calls);
+        Assert.Contains("open:https://huggingface.co/fallback/repo", calls);
+        Assert.Contains("status:Opened Hugging Face model card: owner/repo", calls);
+        Assert.Contains("status:The selected row does not contain a valid Hugging Face repository.", calls);
+    }
+
 
     [Fact]
     public void ModelCapabilityServiceInfersCapabilitiesFromModelMetadata()
@@ -293,6 +372,9 @@ public sealed partial class ReleaseHardeningTests
         var context = ModelCapabilityService.ContextLength(
             new Dictionary<string, object?> { ["qwen3.context_length"] = "32768" },
             "qwen3");
+        var selectedCapabilities = new SelectedModelCapabilityController();
+        var noModelState = selectedCapabilities.Apply(null, ModelCapabilityService.Empty());
+        var selectedState = selectedCapabilities.Apply(model, capabilities);
 
         Assert.Equal("Q4_K_M", capabilities.Quantization);
         Assert.True(capabilities.HasVisionProjector);
@@ -306,6 +388,11 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("Vision: mmproj found", summary, StringComparison.Ordinal);
         Assert.Contains("GGUF metadata: unavailable", summary, StringComparison.Ordinal);
         Assert.True(ModelCapabilityService.LooksVisionCapable("llama-3.2-vision"));
+        Assert.Equal(SelectedModelCapabilityController.NoModelText, noModelState.DisplayText);
+        Assert.False(noModelState.VisionLaunchSettingsAvailable);
+        Assert.Same(capabilities, selectedState.Capabilities);
+        Assert.Equal(summary, selectedState.DisplayText);
+        Assert.True(selectedState.VisionLaunchSettingsAvailable);
     }
 
 
@@ -336,6 +423,42 @@ public sealed partial class ReleaseHardeningTests
         Assert.NotEqual(beforeKey, afterKey);
         Assert.True(after.HasVisionProjector);
         Assert.Contains("mmproj found", ModelCapabilityService.SummaryText(after), StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    [Fact]
+    public async Task ModelCapabilityCacheServiceCachesByModelCacheKey()
+    {
+        var root = CreateTempRoot();
+        var model = new ModelRecord(
+            "qwen",
+            "Qwen",
+            Path.Combine(root, "qwen.gguf"),
+            OwnershipKind.External,
+            "{}",
+            DateTimeOffset.UtcNow);
+        var inspected = ModelCapabilityService.Empty() with { Architecture = "qwen3" };
+        var keyReads = 0;
+        var inspections = 0;
+        var service = new ModelCapabilityCacheService(
+            _ =>
+            {
+                keyReads++;
+                return "stable-key";
+            },
+            _ =>
+            {
+                inspections++;
+                return inspected;
+            });
+
+        var first = await service.ReadAsync(model, TestContext.Current.CancellationToken);
+        var second = await service.ReadAsync(model, TestContext.Current.CancellationToken);
+
+        Assert.Equal(inspected, first);
+        Assert.Equal(inspected, second);
+        Assert.Equal(2, keyReads);
+        Assert.Equal(1, inspections);
     }
 
 
@@ -479,6 +602,35 @@ public sealed partial class ReleaseHardeningTests
 
 
     [Fact]
+    public async Task ModelCatalogPreservesRegistryOnlyLaunchAliasesDuringDeduplication()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Model-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        var appOwned = new ModelRecord("app-owned-model", "App Model", modelPath, OwnershipKind.AppOwned, "{}", DateTimeOffset.UtcNow);
+        await store.UpsertModelAsync(appOwned);
+        var alias = await catalog.CreateLaunchAliasAsync(appOwned, "App Model 32K");
+        await store.SaveModelLaunchSettingsAsync(alias.Id, ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with { Port = 8097 }));
+
+        await catalog.ScanAsync(modelsRoot);
+        var removed = await catalog.CleanupDuplicateModelRecordsAsync();
+        var models = await store.ListModelsAsync();
+
+        Assert.Equal(0, removed);
+        Assert.Contains(models, model => model.Id == appOwned.Id && model.Ownership == OwnershipKind.AppOwned);
+        var savedAlias = Assert.Single(models, ModelAliasService.IsLaunchAlias);
+        Assert.Equal(alias.Id, savedAlias.Id);
+        Assert.Equal("App Model 32K", savedAlias.Name);
+        Assert.Equal(8097, (await store.GetModelLaunchSettingsAsync(alias.Id))?.Port);
+    }
+
+
+    [Fact]
     public async Task ModelCatalogCleanupRemovesGgufExtensionFromDisplayNames()
     {
         var root = CreateTempRoot();
@@ -503,6 +655,37 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal(1, changed);
         Assert.Equal("Qwen3.5 9B Q4 K M", model.Name);
         Assert.DoesNotContain(".gguf", model.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ModelCatalogRefreshApplicationServiceCleansAndCollectsLaunchProfiles()
+    {
+        var root = CreateTempRoot();
+        var modelsRoot = Path.Combine(root, "models");
+        var modelPath = Path.Combine(modelsRoot, "repo-model", "Qwen3.5-9B-Q4_K_M.gguf");
+        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        WriteMinimalGguf(modelPath);
+        await using var store = new StateStore(Path.Combine(root, "state", "local-llm-console.db"));
+        await store.InitializeAsync();
+        var catalog = new ModelCatalogService(store);
+        var refresh = new ModelCatalogRefreshApplicationService(store, catalog);
+        var appOwned = new ModelRecord("app-owned-model", "Qwen3.5-9B-Q4_K_M.gguf", modelPath, OwnershipKind.AppOwned, "{}", DateTimeOffset.UtcNow);
+        var external = new ModelRecord("external-model", "External Model", modelPath, OwnershipKind.External, "{}", DateTimeOffset.UtcNow);
+        var profile = ModelLaunchSettings.FromAppSettings(AppSettings.CreateDefault(root) with { Port = 8096 });
+        var readIds = new List<string>();
+        await store.UpsertModelAsync(external);
+        await store.UpsertModelAsync(appOwned);
+
+        var result = await refresh.RefreshAsync(new ModelCatalogRefreshApplicationActions(model =>
+        {
+            readIds.Add(model.Id);
+            return Task.FromResult<ModelLaunchSettings?>(model.Id == appOwned.Id ? profile : null);
+        }), TestContext.Current.CancellationToken);
+
+        var model = Assert.Single(result.Models);
+        Assert.Equal(appOwned.Id, model.Id);
+        Assert.Equal(["app-owned-model"], readIds);
+        Assert.Equal(8096, result.LaunchProfileFor(model)?.Port);
     }
 
 
@@ -586,6 +769,23 @@ public sealed partial class ReleaseHardeningTests
         Assert.Equal("q5_1", settings.SpecDraftCacheTypeV);
     }
 
+    [Fact]
+    public void HuggingFaceSuggestedLaunchSettingsParseMtpHeadOptions()
+    {
+        var defaults = AppSettings.CreateDefault(CreateTempRoot());
+        const string readme = """
+        ```bash
+        llama-server -m Gemma4-31B-Q8_0.gguf --spec-type mtp --mtp-head "D:\models\mtp-gemma-4-31B-it.gguf"
+        ```
+        """;
+
+        var settings = HuggingFaceLaunchSettingsSuggester.TryCreate(defaults, readme);
+
+        Assert.NotNull(settings);
+        Assert.Equal("atomic-mtp", settings.SpeculativeType);
+        Assert.Equal(@"D:\models\mtp-gemma-4-31B-it.gguf", settings.MtpHeadPath);
+    }
+
 
     [Fact]
     public void HuggingFaceSuggestedLaunchSettingsApplyConfigJsonAndFallbackToCli()
@@ -643,6 +843,29 @@ public sealed partial class ReleaseHardeningTests
             writer.Write((uint)9);
             writer.Write((uint)0);
             writer.Write(1_000_001UL);
+        }
+
+        var metadata = GgufMetadataReader.TryRead(path);
+
+        Assert.Empty(metadata);
+    }
+
+
+    [Fact]
+    public void GgufMetadataReaderRejectsUnsupportedVersions()
+    {
+        var root = CreateTempRoot();
+        var path = Path.Combine(root, "future-version.gguf");
+        using (var stream = File.Create(path))
+        using (var writer = new BinaryWriter(stream))
+        {
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("GGUF"));
+            writer.Write((uint)99);
+            writer.Write((ulong)0);
+            writer.Write((ulong)1);
+            WriteGgufString(writer, "general.architecture");
+            writer.Write((uint)8);
+            WriteGgufString(writer, "future");
         }
 
         var metadata = GgufMetadataReader.TryRead(path);

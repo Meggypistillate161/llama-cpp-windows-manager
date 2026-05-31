@@ -2,6 +2,7 @@ using LocalLlmConsole.Models;
 using LocalLlmConsole.Services;
 using LocalLlmConsole.ViewModels;
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
 
 namespace LocalLlmConsole.Tests;
 
@@ -9,14 +10,14 @@ namespace LocalLlmConsole.Tests;
 public sealed partial class ReleaseHardeningTests
 {
     [Fact]
-    public void ProjectDeclaresVersionOneOneTwoMetadata()
+    public void ProjectDeclaresVersionOneOneThreeMetadata()
     {
         var project = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "LocalLlmConsole.App.csproj"));
 
-        Assert.Contains("<Version>1.1.2</Version>", project, StringComparison.Ordinal);
-        Assert.Contains("<AssemblyVersion>1.1.2.0</AssemblyVersion>", project, StringComparison.Ordinal);
-        Assert.Contains("<FileVersion>1.1.2.0</FileVersion>", project, StringComparison.Ordinal);
-        Assert.Contains("<InformationalVersion>v1.1.2</InformationalVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<Version>1.1.3</Version>", project, StringComparison.Ordinal);
+        Assert.Contains("<AssemblyVersion>1.1.3.0</AssemblyVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<FileVersion>1.1.3.0</FileVersion>", project, StringComparison.Ordinal);
+        Assert.Contains("<InformationalVersion>v1.1.3</InformationalVersion>", project, StringComparison.Ordinal);
     }
 
 
@@ -60,7 +61,10 @@ public sealed partial class ReleaseHardeningTests
         var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "ci.yml"));
         var globalJson = File.ReadAllText(FindRepositoryFile("global.json"));
         var editorConfig = File.ReadAllText(FindRepositoryFile(".editorconfig"));
+        var gitAttributes = File.ReadAllText(FindRepositoryFile(".gitattributes"));
         var solution = File.ReadAllText(FindRepositoryFile("LocalLlmConsole.sln"));
+        var releaseGate = File.ReadAllText(FindRepositoryFile("test-release-gate.ps1"));
+        var development = File.ReadAllText(FindRepositoryFile("docs", "DEVELOPMENT.md"));
 
         Assert.Contains("windows-latest", workflow, StringComparison.Ordinal);
         Assert.Contains(".\\build-app.ps1 -Restore", workflow, StringComparison.Ordinal);
@@ -72,9 +76,60 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("\"version\": \"8.0.421\"", globalJson, StringComparison.Ordinal);
         Assert.Contains("TreatWarningsAsErrors", File.ReadAllText(FindRepositoryFile("Directory.Build.props")), StringComparison.Ordinal);
         Assert.Contains("root = true", editorConfig, StringComparison.Ordinal);
+        Assert.Contains("*.ps1 text eol=lf", gitAttributes, StringComparison.Ordinal);
+        Assert.Contains("*.iss text eol=lf", gitAttributes, StringComparison.Ordinal);
+        Assert.Contains(".gitattributes text eol=lf", gitAttributes, StringComparison.Ordinal);
+        Assert.Contains("[*.{ps1,iss}]", editorConfig, StringComparison.Ordinal);
         Assert.Contains("LocalLlmConsole.App.csproj", solution, StringComparison.Ordinal);
         Assert.Contains("LocalLlmConsole.Tests.csproj", solution, StringComparison.Ordinal);
+        Assert.Contains("build-app.ps1", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("test-app.ps1", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("dotnet format", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("git -C $RepoRoot diff --check", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("test-vulnerabilities.ps1", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("IncludePublish", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("publish-app.ps1", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("IncludeInstaller", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("build-installer.ps1", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("CertificateThumbprint", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("RequireSigned", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("Verify publish artifacts", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("Assert-PublishArtifacts", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("LlamaCppConsole.exe", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("Verify installer artifacts", releaseGate, StringComparison.Ordinal);
+        Assert.Contains("Assert-InstallerArtifacts", releaseGate, StringComparison.Ordinal);
+        Assert.Contains(".\\test-release-gate.ps1", development, StringComparison.Ordinal);
+        Assert.Contains("-IncludePublish -IncludeInstaller", development, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void BuildInstallerRequiresSignedPublishedExecutableForSignedInstaller()
+    {
+        var buildInstaller = File.ReadAllText(FindRepositoryFile("build-installer.ps1"));
+
+        Assert.Contains("function Assert-SignedIfRequired", buildInstaller, StringComparison.Ordinal);
+        Assert.Contains("Assert-SignedIfRequired $PublishedExe $RequireSigned.IsPresent \"Published executable\"", buildInstaller, StringComparison.Ordinal);
+        Assert.Contains("$ArtifactLabel is not signed", buildInstaller, StringComparison.Ordinal);
+        Assert.True(
+            buildInstaller.IndexOf("Assert-SignedIfRequired $PublishedExe", StringComparison.Ordinal)
+            < buildInstaller.IndexOf("& $Iscc @isccArgs", StringComparison.Ordinal));
+    }
+
+
+    [Fact]
+    public void PublishScriptUsesSafeDistCleanup()
+    {
+        var publishScript = File.ReadAllText(FindRepositoryFile("publish-app.ps1"));
+
+        Assert.Contains("function Remove-DistPath", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Refusing to remove $Label outside the dist folder", publishScript, StringComparison.Ordinal);
+        Assert.Contains("System.IO.FileAttributes]::ReparsePoint", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Remove-DistPath -Path $PublishDir -Label \"publish folder\" -Recurse", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Remove-DistPath -Path $ZipPath -Label \"portable release archive\"", publishScript, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $PublishDir -Recurse -Force", publishScript, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item -LiteralPath $ZipPath -Force", publishScript, StringComparison.Ordinal);
+    }
+
 
     [Fact]
     public void InstallerKeepsUserDataUnlessExplicitlyRequested()
@@ -97,6 +152,10 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains(@"%LocalAppData%\Programs\LlamaCppWindowsManager", installerDocs, StringComparison.Ordinal);
         Assert.Contains("UsePreviousAppDir=yes", installer, StringComparison.Ordinal);
         Assert.Contains("UsePreviousGroup=no", installer, StringComparison.Ordinal);
+        Assert.Contains("Start with Windows", installer, StringComparison.Ordinal);
+        Assert.Contains(@"Software\Microsoft\Windows\CurrentVersion\Run", installer, StringComparison.Ordinal);
+        Assert.Contains("ValueName: \"LlamaCppWindowsManager\"", installer, StringComparison.Ordinal);
+        Assert.Contains("uninsdeletevalue", installer, StringComparison.Ordinal);
         Assert.Contains("AppMutex=Local\\llama.cpp-console-single-instance", installer, StringComparison.Ordinal);
         Assert.Contains("postinstall", installer, StringComparison.Ordinal);
         Assert.Contains("InitializeUninstall", installer, StringComparison.Ordinal);
@@ -120,6 +179,7 @@ public sealed partial class ReleaseHardeningTests
         Assert.Contains("LlamaCppWindowsManager-Setup-$AppVersion-$Runtime.exe", buildInstaller, StringComparison.Ordinal);
         Assert.Contains("build-installer.ps1", readme, StringComparison.Ordinal);
         Assert.Contains("Uninstall keeps `data` by default", installerDocs, StringComparison.Ordinal);
+        Assert.Contains("Start with Windows", installerDocs, StringComparison.Ordinal);
         Assert.Contains("Any installer uninstall, repair, or update path that deletes models", releaseReadiness, StringComparison.Ordinal);
     }
 
@@ -141,7 +201,7 @@ public sealed partial class ReleaseHardeningTests
         }
         """)!.AsObject();
 
-        var update = AppUpdateService.ParseLatestRelease(release, "v1.0");
+        var update = AppUpdateReleaseParser.ParseLatestRelease(release, "v1.0");
 
         Assert.True(update.IsAvailable);
         Assert.Equal("v1.0", update.CurrentVersion);
@@ -154,11 +214,189 @@ public sealed partial class ReleaseHardeningTests
     }
 
     [Fact]
+    public void AppUpdateWorkflowServiceBuildsCheckResultMessages()
+    {
+        var available = new AppUpdateInfo(
+            true,
+            "v1.0",
+            "v1.1.2",
+            "Release v1.1.2",
+            "notes",
+            "https://example.invalid/release",
+            AppUpdateService.PortableExeName,
+            "https://example.invalid/app.exe",
+            1024 * 1024,
+            ExpectedSha256: new string('a', 64));
+        var unavailable = AppUpdateReleaseParser.NoUpdateAvailable("v1.1.2");
+
+        var availableResult = AppUpdateWorkflowService.DescribeCheckResult(available, manual: true);
+        var backgroundAvailable = AppUpdateWorkflowService.DescribeCheckResult(available, manual: false);
+        var unavailableResult = AppUpdateWorkflowService.DescribeCheckResult(unavailable, manual: true);
+
+        Assert.Equal("Update available: v1.1.2.", availableResult.StatusMessage);
+        Assert.True(availableResult.ShouldPromptInstall);
+        Assert.False(backgroundAvailable.ShouldPromptInstall);
+        Assert.Contains("v1.0 -> v1.1.2", availableResult.DialogMessage, StringComparison.Ordinal);
+        Assert.Equal("No app updates available.", unavailableResult.StatusMessage);
+        Assert.True(unavailableResult.ShouldShowNoUpdateDialog);
+        Assert.Contains("Current version: v1.1.2", unavailableResult.DialogMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AppUpdateApplicationServiceOwnsCheckAndInstallUiFlow()
+    {
+        var service = new AppUpdateApplicationService();
+        var available = new AppUpdateInfo(
+            true,
+            "v1.0",
+            "v9.9.9",
+            "Release v9.9.9",
+            "notes",
+            "https://example.invalid/release",
+            AppUpdateService.PortableExeName,
+            "https://example.invalid/app.exe",
+            1024,
+            ExpectedSha256: new string('a', 64));
+        var unavailable = AppUpdateReleaseParser.NoUpdateAvailable("v1.1.2");
+        var calls = new List<string>();
+        var inFlight = false;
+
+        var skipped = await service.CheckForUpdatesAsync(manual: true, CheckActions(
+            () => true,
+            (_, _) => throw new InvalidOperationException("Already running checks must not call the workflow."),
+            confirmResult: true),
+            TestContext.Current.CancellationToken);
+        var checkedAvailable = await service.CheckForUpdatesAsync(manual: true, CheckActions(
+            () => inFlight,
+            (manual, _) => Task.FromResult(AppUpdateWorkflowService.DescribeCheckResult(available, manual)),
+            confirmResult: true),
+            TestContext.Current.CancellationToken);
+        var checkedUnavailable = await service.CheckForUpdatesAsync(manual: true, CheckActions(
+            () => inFlight,
+            (manual, _) => Task.FromResult(AppUpdateWorkflowService.DescribeCheckResult(unavailable, manual)),
+            confirmResult: true),
+            TestContext.Current.CancellationToken);
+        var failed = await service.CheckForUpdatesAsync(manual: true, CheckActions(
+            () => inFlight,
+            (_, _) => throw new InvalidOperationException("offline"),
+            confirmResult: true),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(AppUpdateCheckApplicationOutcome.Skipped, skipped);
+        Assert.Equal(AppUpdateCheckApplicationOutcome.Checked, checkedAvailable);
+        Assert.Equal(AppUpdateCheckApplicationOutcome.Checked, checkedUnavailable);
+        Assert.Equal(AppUpdateCheckApplicationOutcome.Failed, failed);
+        Assert.Contains("inflight:True", calls);
+        Assert.Contains("latest:v9.9.9", calls);
+        Assert.Contains("nav", calls);
+        Assert.Contains("show-updates", calls);
+        Assert.Contains("status:Update available: v9.9.9.", calls);
+        Assert.Contains("confirm:Install update:Information", calls);
+        Assert.Contains("install:v9.9.9:False", calls);
+        Assert.Contains("notify:Check for updates:Information", calls);
+        Assert.Contains("status:Update check failed: offline", calls);
+        Assert.Contains("notify:Update check failed:Warning", calls);
+        Assert.False(inFlight);
+
+        AppUpdateCheckApplicationActions CheckActions(
+            Func<bool> isCheckInFlight,
+            Func<bool, CancellationToken, Task<AppUpdateCheckWorkflowResult>> checkLatestAsync,
+            bool confirmResult)
+            => new(
+                isCheckInFlight,
+                value =>
+                {
+                    inFlight = value;
+                    calls.Add($"inflight:{value}");
+                },
+                checkLatestAsync,
+                update => calls.Add($"latest:{update.LatestVersion}"),
+                () => calls.Add("nav"),
+                () => true,
+                () => calls.Add("show-updates"),
+                status => calls.Add($"status:{status}"),
+                prompt =>
+                {
+                    calls.Add($"confirm:{prompt.Title}:{prompt.Kind}");
+                    return confirmResult;
+                },
+                prompt => calls.Add($"notify:{prompt.Title}:{prompt.Kind}"),
+                (update, confirm) =>
+                {
+                    calls.Add($"install:{update.LatestVersion}:{confirm}");
+                    return Task.CompletedTask;
+                });
+    }
+
+    [Fact]
+    public async Task AppUpdateApplicationServiceOwnsInstallValidationAndClose()
+    {
+        var service = new AppUpdateApplicationService();
+        var unavailable = AppUpdateReleaseParser.NoUpdateAvailable("v1.1.2");
+        var missingAsset = new AppUpdateInfo(true, "v1.0", "v2.0", "Release", "", "", "", "", 0);
+        var installable = missingAsset with
+        {
+            AssetName = AppUpdateService.PortableExeName,
+            AssetUrl = "https://example.invalid/app.zip"
+        };
+        var calls = new List<string>();
+
+        var notAvailable = await service.InstallAsync(
+            new AppUpdateInstallApplicationRequest(unavailable, Confirm: true, "app.exe", 123),
+            InstallActions(confirmResult: true),
+            TestContext.Current.CancellationToken);
+        var missing = await service.InstallAsync(
+            new AppUpdateInstallApplicationRequest(missingAsset, Confirm: true, "app.exe", 123),
+            InstallActions(confirmResult: true),
+            TestContext.Current.CancellationToken);
+        var declined = await service.InstallAsync(
+            new AppUpdateInstallApplicationRequest(installable, Confirm: true, "app.exe", 123),
+            InstallActions(confirmResult: false),
+            TestContext.Current.CancellationToken);
+        var started = await service.InstallAsync(
+            new AppUpdateInstallApplicationRequest(installable, Confirm: true, "app.exe", 123),
+            InstallActions(confirmResult: true),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(AppUpdateInstallApplicationOutcome.NotAvailable, notAvailable);
+        Assert.Equal(AppUpdateInstallApplicationOutcome.MissingAsset, missing);
+        Assert.Equal(AppUpdateInstallApplicationOutcome.Declined, declined);
+        Assert.Equal(AppUpdateInstallApplicationOutcome.Started, started);
+        Assert.Contains("notify:Install update:Warning", calls);
+        Assert.Contains("confirm:Install update:Information", calls);
+        Assert.Contains("busy:Preparing app update...", calls);
+        Assert.Contains("stage:v2.0:app.exe:123", calls);
+        Assert.Contains("status:Update staged. Closing to install...", calls);
+        Assert.Contains("close", calls);
+
+        AppUpdateInstallApplicationActions InstallActions(bool confirmResult)
+            => new(
+                prompt =>
+                {
+                    calls.Add($"confirm:{prompt.Title}:{prompt.Kind}");
+                    return confirmResult;
+                },
+                prompt => calls.Add($"notify:{prompt.Title}:{prompt.Kind}"),
+                async (message, action) =>
+                {
+                    calls.Add($"busy:{message}");
+                    await action();
+                },
+                (update, processPath, processId, _) =>
+                {
+                    calls.Add($"stage:{update.LatestVersion}:{processPath}:{processId}");
+                    return Task.FromResult("Update staged. Closing to install...");
+                },
+                status => calls.Add($"status:{status}"),
+                () => calls.Add("close"));
+    }
+
+    [Fact]
     public async Task AppUpdateServiceChecksConfiguredGithubReleaseEndpoint()
     {
         using var handler = new CapturingHttpHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
         using var http = new HttpClient(handler);
-        var service = new AppUpdateService(http);
+        var service = CreateAppUpdateService(http);
 
         var update = await service.CheckLatestAsync(TestContext.Current.CancellationToken);
 
@@ -168,12 +406,45 @@ public sealed partial class ReleaseHardeningTests
     }
 
     [Fact]
+    public void AppUpdateServiceStartsInstallerThroughInjectedProcessLauncher()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "AppUpdateService.cs"));
+        var root = CreateTempRoot();
+        var scriptPath = Path.Combine(root, "cache", "app-updates", "v1.1.2", "Install-LlamaCppWindowsManagerUpdate.ps1");
+        var sourceExe = Path.Combine(root, "cache", "app-updates", "v1.1.2", AppUpdateService.PortableExeName);
+        var targetExe = Path.Combine(root, AppUpdateService.PortableExeName);
+        var noticePath = Path.Combine(root, "cache", "app-updates", "installed-update.json");
+        var started = new List<ProcessStartInfo>();
+        var service = new AppUpdateService(new HttpClient(), started.Add);
+
+        service.StartInstaller(new AppUpdateInstallPlan(scriptPath, sourceExe, targetExe, noticePath), 4321);
+
+        var process = Assert.Single(started);
+        Assert.Equal(HostExecutableResolver.WindowsPowerShellExe(), process.FileName);
+        Assert.False(process.UseShellExecute);
+        Assert.True(process.CreateNoWindow);
+        Assert.Equal(ProcessWindowStyle.Hidden, process.WindowStyle);
+        Assert.Equal(Path.GetDirectoryName(targetExe), process.WorkingDirectory);
+        var args = process.ArgumentList.ToArray();
+        Assert.Contains("-ParentPid", args);
+        Assert.Contains("4321", args);
+        Assert.Contains("-SourceExe", args);
+        Assert.Contains(sourceExe, args);
+        Assert.Contains("-TargetExe", args);
+        Assert.Contains(targetExe, args);
+        Assert.Contains("-NoticeTarget", args);
+        Assert.Contains(noticePath, args);
+        Assert.DoesNotContain("new HttpClient", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Process.Start", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AppUpdateServiceExtractsChecksumForSelectedAsset()
     {
         const string hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-        var exact = AppUpdateService.ExtractSha256($"{hash}  LlamaCppWindowsManager-win-x64.zip", "LlamaCppWindowsManager-win-x64.zip");
-        var unrelated = AppUpdateService.ExtractSha256($"{hash}  other.zip", "LlamaCppWindowsManager-win-x64.zip");
+        var exact = AppUpdateAssetVerifier.ExtractSha256($"{hash}  LlamaCppWindowsManager-win-x64.zip", "LlamaCppWindowsManager-win-x64.zip");
+        var unrelated = AppUpdateAssetVerifier.ExtractSha256($"{hash}  other.zip", "LlamaCppWindowsManager-win-x64.zip");
 
         Assert.Equal(hash, exact);
         Assert.Equal("", unrelated);
@@ -183,7 +454,7 @@ public sealed partial class ReleaseHardeningTests
     public async Task AppUpdateServiceRequiresChecksumBeforeStaging()
     {
         var temp = CreateTempRoot();
-        var service = new AppUpdateService(new HttpClient());
+        var service = CreateAppUpdateService(new HttpClient());
         var update = new AppUpdateInfo(
             true,
             "v1.0",
@@ -221,7 +492,7 @@ public sealed partial class ReleaseHardeningTests
             return response;
         });
         using var http = new HttpClient(handler);
-        var service = new AppUpdateService(http);
+        var service = CreateAppUpdateService(http);
         var update = new AppUpdateInfo(
             true,
             "v1.0",
@@ -252,7 +523,7 @@ public sealed partial class ReleaseHardeningTests
     public async Task AppUpdateServiceRejectsInvalidInlineChecksum()
     {
         var temp = CreateTempRoot();
-        var service = new AppUpdateService(new HttpClient());
+        var service = CreateAppUpdateService(new HttpClient());
         var update = new AppUpdateInfo(
             true,
             "v1.0",
@@ -291,7 +562,7 @@ public sealed partial class ReleaseHardeningTests
             return response;
         });
         using var http = new HttpClient(handler);
-        var service = new AppUpdateService(http);
+        var service = CreateAppUpdateService(http);
         var legacyExe = Path.Combine(temp, AppUpdateService.LegacyPortableExeName);
         var update = new AppUpdateInfo(
             true,
@@ -317,6 +588,9 @@ public sealed partial class ReleaseHardeningTests
             if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
         }
     }
+
+    private static AppUpdateService CreateAppUpdateService(HttpClient http)
+        => new(http, _ => { });
 
     private sealed class CapturingHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {

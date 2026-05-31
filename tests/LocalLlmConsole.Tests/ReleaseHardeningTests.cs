@@ -52,6 +52,12 @@ public sealed partial class ReleaseHardeningTests
         return root;
     }
 
+    private static OpenCodeLocalModelWorkflowService CreateOpenCodeLocalModelWorkflowService(string root)
+        => new(new OpenCodeModelSyncService(new OpenCodeConfigService(root)));
+
+    private static OpenCodeLocalModelApplicationService CreateOpenCodeLocalModelApplicationService(string root)
+        => new(CreateOpenCodeLocalModelWorkflowService(root));
+
     private static string FindRepositoryFile(params string[] segments)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -59,6 +65,24 @@ public sealed partial class ReleaseHardeningTests
         {
             var candidate = Path.Combine(new[] { directory.FullName }.Concat(segments).ToArray());
             if (File.Exists(candidate)) return candidate;
+            if (segments.Length > 0 && (segments.Contains("Services", StringComparer.OrdinalIgnoreCase)
+                || segments.Contains("Ui", StringComparer.OrdinalIgnoreCase)))
+            {
+                var moduleRoot = Path.Combine(
+                    directory.FullName,
+                    "src",
+                    "LocalLlmConsole.App",
+                    segments.Contains("Services", StringComparer.OrdinalIgnoreCase) ? "Services" : "Ui");
+                if (Directory.Exists(moduleRoot))
+                {
+                    var fileName = segments[^1];
+                    var movedCandidate = Directory
+                        .EnumerateFiles(moduleRoot, fileName, SearchOption.AllDirectories)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .FirstOrDefault();
+                    if (movedCandidate is not null) return movedCandidate;
+                }
+            }
             directory = directory.Parent;
         }
 
@@ -76,10 +100,54 @@ public sealed partial class ReleaseHardeningTests
                 .Select(File.ReadAllText));
     }
 
+    private static string ReadAppServiceFactorySources()
+    {
+        var factoryPath = FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "AppServiceFactory.cs");
+        var servicesRoot = Path.GetDirectoryName(factoryPath)!;
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(servicesRoot, "AppServiceFactory*.cs", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(File.ReadAllText));
+    }
+
+    private static string ReadAppServiceFactoryFileNames()
+    {
+        var factoryPath = FindRepositoryFile("src", "LocalLlmConsole.App", "Services", "AppServiceFactory.cs");
+        var servicesRoot = Path.GetDirectoryName(factoryPath)!;
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(servicesRoot, "AppServiceFactory*.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string ReadLaunchSettingsPanelFactorySources()
+    {
+        var factoryPath = FindRepositoryFile("src", "LocalLlmConsole.App", "Ui", "LaunchSettingsPanelFactory.cs");
+        var factoryRoot = Path.GetDirectoryName(factoryPath)!;
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(factoryRoot, "LaunchSettingsPanelFactory*.cs", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(File.ReadAllText));
+    }
+
+    private static string ReadServicePartialSources(string prefix)
+    {
+        var sourcePath = FindRepositoryFile("src", "LocalLlmConsole.App", "Services", $"{prefix}.cs");
+        var sourceRoot = Path.GetDirectoryName(sourcePath)!;
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(sourceRoot, $"{prefix}*.cs", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(File.ReadAllText));
+    }
+
     private static void AssertServicePartials(string appRoot, string folder, string prefix, int maxLines, params string[] requiredFiles)
     {
         var root = Path.Combine(appRoot, folder);
-        var files = Directory.EnumerateFiles(root, $"{prefix}*.cs", SearchOption.TopDirectoryOnly)
+        var files = Directory.EnumerateFiles(root, $"{prefix}*.cs", SearchOption.AllDirectories)
             .Select(path => new { Name = Path.GetFileName(path), Lines = File.ReadAllLines(path).Length })
             .ToArray();
         var names = files.Select(file => file.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);

@@ -22,9 +22,30 @@ public partial class MainWindow : Window
         ApplyStaticButtonToolTips();
         StateChanged += Window_StateChanged;
         _workspaceRoot = WorkspaceRootResolver.Resolve();
+        _serviceFactory = new AppServiceFactory(_workspaceRoot);
+        _infrastructureServices = _serviceFactory.CreateMainWindowInfrastructureServices();
+        _sessions = _infrastructureServices.Sessions;
         _settings = AppSettings.CreateDefault(_workspaceRoot);
-        _activeSessions = new ActiveRuntimeSessionStore(_workspaceRoot);
-        _openCode = new OpenCodeConfigService(_workspaceRoot);
+        _coreServices = _serviceFactory.CreateMainWindowCoreServices(_infrastructureServices.CoreServiceRequest());
+        var uiState = _coreServices.Ui.UiState;
+        _viewModel = uiState.ViewModel;
+        _openCodeFileSet = uiState.OpenCodeFileSet;
+        _runtimeCatalogState = uiState.RuntimeCatalogState;
+        _launchSettingsPanel = uiState.LaunchSettingsPanel;
+        _modelsPage = uiState.ModelsPage;
+        _overviewPage = uiState.OverviewPage;
+        _runtimesPage = uiState.RuntimesPage;
+        _logsPage = uiState.LogsPage;
+        _lifetimePage = uiState.LifetimePage;
+        _settingsPage = uiState.SettingsPage;
+        _openCodePage = uiState.OpenCodePage;
+        _openCodeModelEditor = uiState.OpenCodeModelEditor;
+        _downloadHistoryPageState = uiState.DownloadHistoryPageState;
+        _runtimeDashboardPage = uiState.RuntimeDashboardPage;
+        _windowsPage = uiState.WindowsPage;
+        _wslPage = uiState.WslPage;
+        _environmentPageSnapshots = uiState.EnvironmentPageSnapshots;
+        _pageControllers = CreatePageControllers();
         InitializeTrayIcon();
     }
 
@@ -32,194 +53,127 @@ public partial class MainWindow : Window
     {
         await RunAsync("Starting app...", async () =>
         {
-            Directory.CreateDirectory(_workspaceRoot);
-            _settings = await InitializeStateStoreAsync();
-            ApplyTheme(_settings.ThemeMode);
-            Directory.CreateDirectory(_settings.ModelsRoot);
-            Directory.CreateDirectory(_settings.RuntimeRoot);
-            Directory.CreateDirectory(_settings.CacheRoot);
-            var stateStore = _stateStore ?? throw new InvalidOperationException("State store did not initialize.");
-            _jobs = new JobEngine(stateStore, Path.Combine(_workspaceRoot, "logs"));
-            _catalog = new ModelCatalogService(stateStore);
-            _runtimes = new RuntimeRegistryService(stateStore);
-            _huggingFace = new HuggingFaceService(stateStore, _jobs, _catalog);
-            _service = await StartLocalAppServiceAsync(stateStore, _jobs);
-            await CleanupInterruptedRuntimeBuildJobsAsync();
-            await _huggingFace.RecoverInterruptedDownloadsAsync(_settings);
-            RunBackground(SeedSuggestedLaunchProfilesInBackgroundAsync, "Launch profile seeding failed");
+            await _coreServices.App.StartupApplication.StartAsync(
+                new AppStartupApplicationRequest(
+                    _workspaceRoot,
+                    _serviceFactory.DatabasePath,
+                    _serviceFactory.CreateStateStore,
+                    stateStore => _serviceFactory.CreateMainWindowLoadedServices(
+                        _infrastructureServices.LoadedServiceRequest(stateStore, _coreServices)),
+                    (stateStore, jobs, port) => _serviceFactory.CreateLocalAppService(stateStore, jobs, port)),
+                new AppStartupApplicationActions(
+                    stateStore => _stateStore = stateStore,
+                        settings =>
+                        {
+                            _settings = settings;
+                            ApplyTheme(settings.ThemeMode);
+                        },
+                    ApplyLoadedServices,
+                    service => _service = service,
+                    SetStatus));
+            RunBackground(SeedSuggestedLaunchProfilesInBackgroundAsync, "Launch profile seeding follow-up failed");
             ShowOverview();
             await RefreshAllAsync();
             await RecoverActiveRuntimeSessionAsync();
+            await RestartModelGatewayAsync();
             RunBackground(AutoSelectDetectedWslDistroAsync, "WSL distro auto-select failed");
         });
         await ShowCompletedAppUpdateNoticeAsync();
         RunBackground(CheckForAppUpdatesOnStartupAsync, "App update check failed");
     }
 
-    private async Task<AppSettings> InitializeStateStoreAsync()
+    private void ApplyLoadedServices(MainWindowLoadedServices services)
     {
-        var databasePath = Path.Combine(_workspaceRoot, "state", "local-llm-console.db");
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            _stateStore = new StateStore(databasePath);
-            try
-            {
-                await _stateStore.InitializeAsync();
-                var loaded = await _stateStore.GetAppSettingsAsync(_workspaceRoot);
-                var settings = loaded with { WorkspaceRoot = _workspaceRoot };
-                if (!string.Equals(loaded.WorkspaceRoot, _workspaceRoot, StringComparison.OrdinalIgnoreCase))
-                    await _stateStore.SaveAppSettingsAsync(settings);
-                return settings;
-            }
-            catch (SqliteException) when (attempt == 0)
-            {
-                await _stateStore.DisposeAsync();
-                _stateStore = null;
-                StateStore.QuarantineDatabaseFiles(databasePath);
-            }
-        }
-
-        throw new InvalidOperationException("Unable to initialize the application state database.");
+        _appServices = services.App;
+        _modelServices = services.Models;
+        _gatewayServices = services.Gateway;
+        _runtimeServices = services.Runtime;
     }
 
     private async Task SeedSuggestedLaunchProfilesInBackgroundAsync()
     {
-        try
-        {
-            if (_huggingFace is null) return;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            var seeded = await _huggingFace.SeedSuggestedLaunchProfilesAsync(_settings, cts.Token);
-            if (seeded > 0)
-            {
-                await Dispatcher.InvokeAsync(async () =>
-                {
-                    SetStatus($"Applied Hugging Face suggested launch defaults for {seeded} model{(seeded == 1 ? "" : "s")}.");
-                    await RenderSelectedModelLaunchSettingsAsync();
-                });
-            }
-        }
-        catch
-        {
-            // Suggested settings are opportunistic; offline startup should stay quiet.
-        }
-    }
+        var huggingFace = _appServices?.HuggingFace;
+        var result = await _coreServices.App.StartupBackgroundApplication.SeedSuggestedLaunchProfilesAsync(
+            new AppStartupSuggestedLaunchProfileSeedRequest(
+                _settings,
+                huggingFace is null ? null : huggingFace.SeedSuggestedLaunchProfilesAsync));
+        if (!result.ShouldRefreshLaunchSettings)
+            return;
 
-    private async Task<LocalAppService> StartLocalAppServiceAsync(StateStore stateStore, JobEngine jobs)
-    {
-        const int preferredPort = 8090;
-        const int maxFallbackPort = preferredPort + 20;
-
-        for (var port = preferredPort; port <= maxFallbackPort; port++)
-        {
-            var service = new LocalAppService(stateStore, jobs, port);
-            try
+        await Dispatcher.InvokeAsync(async () =>
             {
-                await service.StartAsync();
-                if (port != preferredPort)
-                    SetStatus($"Local app service moved to 127.0.0.1:{port} because port {preferredPort} was busy.");
-                return service;
-            }
-            catch (HttpListenerException) when (port < maxFallbackPort)
-            {
-                await service.DisposeAsync();
-            }
-            catch (SocketException) when (port < maxFallbackPort)
-            {
-                await service.DisposeAsync();
-            }
-        }
-
-        throw new InvalidOperationException($"Could not start the local app service on 127.0.0.1:{preferredPort}-{maxFallbackPort}.");
+                SetStatus(result.StatusMessage);
+                await RenderSelectedModelLaunchSettingsAsync();
+            });
     }
 
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         try
         {
-            if (_shutdownCleanupComplete) return;
-            e.Cancel = true;
-            if (_shutdownRequested) return;
-            _shutdownRequested = true;
-
-            if (_sessions.HasRunningSessions)
-            {
-                var count = _sessions.Snapshots().Count(session => session.IsRunning);
-                var result = ThemedMessageBox.Show(
-                    this,
-                    $"{count} model session{(count == 1 ? " is" : "s are")} running.\n\nClosing the app will stop all loaded models and free their runtime resources.\n\nClose and stop loaded models?",
-                    "Models are running",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-                if (result != MessageBoxResult.Yes)
-                {
-                    _shutdownRequested = false;
-                    return;
-                }
-            }
-
-            if (_huggingFace?.ActiveDownloadCount > 0)
-            {
-                var downloadText = _huggingFace.ActiveDownloadCount == 1 ? "1 model download is" : $"{_huggingFace.ActiveDownloadCount} model downloads are";
-                var result = ThemedMessageBox.Show(
-                    this,
-                    $"{downloadText} still running.\n\nClosing the app will pause active downloads and save the partial files so they can be resumed from History next time.\n\nClose and pause downloads?",
-                    "Downloads in progress",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-                if (result != MessageBoxResult.Yes)
-                {
-                    _shutdownRequested = false;
-                    return;
-                }
-            }
-
-            IsEnabled = false;
-            var closingStatus = _sessions.HasRunningSessions
-                ? "Stopping runtimes and closing..."
-                : _huggingFace?.ActiveDownloadCount > 0
-                    ? "Pausing active downloads and closing..."
-                    : "Closing...";
-            SetStatus(closingStatus);
-            await ShutdownAsync();
-            _shutdownCleanupComplete = true;
-            Close();
+            var result = await _coreServices.App.ShutdownApplication.BeginShutdownAsync(
+                new AppShutdownApplicationRequest(
+                    _sessions.Snapshots().Count(session => session.IsRunning),
+                    _appServices?.HuggingFace.ActiveDownloadCount ?? 0),
+                new AppShutdownApplicationActions(
+                    confirmation => Task.FromResult(_coreServices.App.Dialogs.Confirm(
+                        this,
+                        confirmation.Message,
+                        confirmation.Title,
+                        MessageBoxImage.Warning)),
+                    () => IsEnabled = false,
+                    SetStatus,
+                    ShutdownAsync));
+            e.Cancel = result.CancelClosingEvent;
+            if (result.RequestClose)
+                Close();
         }
         catch (Exception ex)
         {
-            _shutdownRequested = false;
             IsEnabled = true;
             SetStatus($"Shutdown failed: {ex.Message}");
             await WriteAppLogAsync(ex);
-            ThemedMessageBox.Show(this, ex.Message, "Shutdown failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            _coreServices.App.Dialogs.Notify(this, ex.Message, "Shutdown failed", MessageBoxImage.Error);
         }
     }
 
     private async Task ShutdownAsync()
-    {
-        _downloadHistoryTimer?.Stop();
-        _runtimeDashboardTimer?.Stop();
-        CancelLaunchSettingsRefresh();
-        StopRuntimeReadinessMonitor();
-        DisposeTrayIcon();
-        if (_huggingFace is not null) await _huggingFace.PauseActiveDownloadsAsync(TimeSpan.FromSeconds(10));
-        _processRunner.KillTrackedProcesses();
-        await CleanupActiveWslBuildsAsync();
-        await _sessions.StopAllAsync();
-        _sessions.Dispose();
-        _runtimePackageClient.Dispose();
-        _metricsClient.Dispose();
-        _activeRuntimeSettings = null;
-        ClearActiveRuntimeSession();
-        if (_service is not null)
-        {
-            await _service.DisposeAsync();
-            _service = null;
-        }
-        if (_stateStore is not null)
-        {
-            await _stateStore.DisposeAsync();
-            _stateStore = null;
-        }
-    }
+        => await _coreServices.App.ShutdownCleanupApplication.CleanupAsync(new AppShutdownCleanupActions(
+            _coreServices.Ui.DownloadHistoryRefreshTimer.Stop,
+            _coreServices.Ui.RuntimeDashboardRefreshTimer.Stop,
+            CancelLaunchSettingsRefresh,
+            StopRuntimeReadinessMonitor,
+            DisposeTrayIcon,
+            async () =>
+            {
+                if (_appServices?.HuggingFace is not null)
+                    await _appServices.HuggingFace.PauseActiveDownloadsAsync(TimeSpan.FromSeconds(10));
+            },
+            _infrastructureServices.ProcessRunner.KillTrackedProcesses,
+            CleanupActiveWslBuildsAsync,
+            StopModelGatewayAsync,
+            _coreServices.Runtime.RuntimeSessions.StopAllAsync,
+            _sessions.Dispose,
+            _infrastructureServices.RuntimePackageClient.Dispose,
+            _infrastructureServices.MetricsClient.Dispose,
+            _infrastructureServices.RuntimeProbeClient.Dispose,
+            () => _activeRuntimeSettings = null,
+            ClearActiveRuntimeSession,
+            async () =>
+            {
+                if (_service is not null)
+                {
+                    await _service.DisposeAsync();
+                    _service = null;
+                }
+            },
+            async () =>
+            {
+                if (_stateStore is not null)
+                {
+                    await _stateStore.DisposeAsync();
+                    _stateStore = null;
+                }
+            }));
 
 }

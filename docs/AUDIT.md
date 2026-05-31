@@ -1,6 +1,6 @@
 # Release Hardening Audit
 
-Audit date: 2026-05-27
+Audit date: 2026-05-31
 
 ## Executive Summary
 
@@ -32,6 +32,19 @@ The core release blockers from the full audit have been addressed in code:
 - Per-model launch settings now include vision image token allowances and map them to llama.cpp server flags.
 - Per-model ports and loaded model sessions allow more than one model endpoint
   to stay available when hardware capacity allows it.
+- The auto-load gateway provides one shared OpenAI-compatible endpoint, routes
+  by requested model id, starts models on their saved direct ports, and exposes
+  policy controls for keeping loaded sessions or switching to one active model.
+- LAN exposure is scoped by Settings so users can expose only the gateway, only
+  direct model endpoints, both, or neither.
+- Per-model launch profiles now support saved variants, auto-detected,
+  embedded/model-bundled, or explicit vision head/projector choices, vision
+  image token allowances, separate MTP head choices for compatible runtimes,
+  and OpenCode vision metadata when synced.
+- OpenCode sync can be automatic on launch-setting/variant save or manually
+  controlled from the OpenCode page.
+- Fresh installer setups offer Start with Windows by default, with a matching
+  current-user startup preference in Settings.
 - The local app service now keeps request handlers observed and tolerates
   bounded transient listener errors instead of silently faulting the listener
   loop.
@@ -71,10 +84,12 @@ The core release blockers from the full audit have been addressed in code:
 
 - Severity: Medium
 - Area: Third-party binaries
-- Status: Official prebuilt runtime downloads are installed from upstream GitHub
-  release assets and locally fingerprinted for source/prebuilt equivalence.
-  Upstream package authenticity still depends on GitHub transport/release trust
-  unless matching trusted upstream checksums or signatures become available.
+- Status: Prebuilt runtime downloads are installed from their configured package
+  sources, including official GitHub release assets and selected fork binary
+  feeds, then locally fingerprinted for source/prebuilt equivalence where
+  possible. Package authenticity still depends on the package source transport
+  and release trust unless matching trusted upstream checksums or signatures
+  become available.
 - Required result: Prefer trusted upstream checksums or signatures for runtime
   archives when upstream publishes them.
 
@@ -83,6 +98,7 @@ The core release blockers from the full audit have been addressed in code:
 Current passing checks:
 
 ```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-app.ps1 -Restore
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-app.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-vulnerabilities.ps1
@@ -90,7 +106,38 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\publish-app.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipPublish
 ```
 
-The latest local pre-release pass ran the release-hardening suite, verified formatting, published the portable zip, and compiled the v1.1.2 installer. The portable zip includes both `LlamaCppWindowsManager.exe` and the legacy `LlamaCppConsole.exe` alias for renamed-app update compatibility.
+The latest local architecture/release pass ran
+`test-release-gate.ps1 -IncludePublish -IncludeInstaller`, which wraps the
+release build, release-hardening suite, formatting verification,
+`git diff --check`, vulnerable-package audit, publish smoke, and installer
+artifact checks. The portable zip for v1.1.2 and newer includes both
+`LlamaCppWindowsManager.exe` and the legacy `LlamaCppConsole.exe` alias for
+renamed-app update compatibility.
+
+## Post-v1.1.2 Hardening
+
+After publishing `v1.1.2`, a follow-up bug-report triage fixed the actionable
+low-risk items that were safe to take immediately:
+
+- Runtime backend inference now prefers explicit packaged metadata and nearby
+  runtime files over loose folder/path text, avoiding false CUDA/SYCL/Vulkan
+  classification from names like `cuda-backup`.
+- `LlamaProcessSupervisor` runtime state transitions are now atomic/volatile
+  across process output callbacks, readiness checks, and exit handling.
+- `LogFileService.Head` now detects byte-order marks like `Tail` already did.
+- `GgufMetadataReader` now ignores unsupported/future GGUF versions instead of
+  silently parsing unknown metadata layouts.
+
+Verification for this hardening pass:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
+```
+
+Result on 2026-05-31: release-hardening tests passed (`421/421`), formatting was
+clean, the Release build succeeded with zero warnings, no vulnerable packages
+were found, the diff had no whitespace errors, and publish/installer artifact
+checks passed locally.
 
 ## Edge Cases To Keep Testing
 

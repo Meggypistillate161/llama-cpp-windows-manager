@@ -7,7 +7,12 @@ public sealed record AppSettings(
     string CacheRoot,
     string ThemeMode,
     string MinimizeBehavior,
+    bool StartWithWindows,
+    bool AutoSaveOpenCodeOnLaunchSettingsSave,
     string ModelAccessMode,
+    bool AutoLoadGatewayEnabled,
+    int AutoLoadGatewayPort,
+    string AutoLoadGatewayPolicy,
     string Host,
     string ModelApiKey,
     string WslDistro,
@@ -22,6 +27,7 @@ public sealed record AppSettings(
     string ReasoningFormat,
     int ReasoningBudget,
     string VisionMode,
+    string VisionProjectorPath,
     int VisionImageMinTokens,
     int VisionImageMaxTokens,
     string FlashAttention,
@@ -53,6 +59,7 @@ public sealed record AppSettings(
     double RopeFreqScale,
     string SpeculativeType,
     string SpecDraftModelPath,
+    string MtpHeadPath,
     int SpecDraftGpuLayers,
     int SpecDraftMinTokens,
     int SpecDraftMaxTokens,
@@ -78,6 +85,7 @@ public sealed record AppSettings(
     public const double DefaultRopeFreqBase = 0.0;
     public const double DefaultRopeFreqScale = 0.0;
     public const string DefaultSpeculativeType = "none";
+    public const string DefaultMtpHeadPath = "";
     public const int DefaultSpecDraftGpuLayers = -1;
     public const int DefaultSpecDraftMinTokens = 0;
     public const int DefaultSpecDraftMaxTokens = 0;
@@ -94,7 +102,12 @@ public sealed record AppSettings(
         Path.Combine(workspaceRoot, "cache"),
         "system",
         "taskbarOnly",
+        false,
+        true,
         "local",
+        true,
+        8082,
+        "singleActive",
         "127.0.0.1",
         "",
         "Ubuntu-24.04",
@@ -109,6 +122,7 @@ public sealed record AppSettings(
         "auto",
         -1,
         "auto",
+        "",
         DefaultVisionImageMinTokens,
         DefaultVisionImageMaxTokens,
         "auto",
@@ -140,6 +154,7 @@ public sealed record AppSettings(
         DefaultRopeFreqScale,
         DefaultSpeculativeType,
         "",
+        DefaultMtpHeadPath,
         DefaultSpecDraftGpuLayers,
         DefaultSpecDraftMinTokens,
         DefaultSpecDraftMaxTokens,

@@ -1,0 +1,409 @@
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
+using WpfApplication = System.Windows.Application;
+using WpfBrush = System.Windows.Media.Brush;
+using WpfProgressBar = System.Windows.Controls.ProgressBar;
+
+namespace LocalLlmConsole;
+
+public static class MetricCardFactory
+{
+    private static readonly Regex MetricImportantValuePattern = new(
+        @"\d[\d,]*(?:\.\d+)?(?:/\d[\d,]*(?:\.\d+)?)?\s*(?:t/s|/s|avg|%|C|GiB|GB|MiB|tokens?)?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly System.Windows.Media.FontFamily MetricValueFont = new("Cascadia Mono, Consolas, Segoe UI");
+
+    public static Grid AddMetric(Grid grid, string label, int row, int column)
+        => AddMetric(grid, label, row, column, includeProgress: false, out _, out _);
+
+    public static Grid AddMetric(Grid grid, string label, int row, int column, out TextBlock lastKnown)
+        => AddMetric(grid, label, row, column, includeProgress: false, out _, out lastKnown);
+
+    public static Grid AddMetric(Grid grid, string label, int row, int column, bool includeProgress, out WpfProgressBar? progress)
+        => AddMetric(grid, label, row, column, includeProgress, out progress, out _);
+
+    public static Grid AddMetric(
+        Grid grid,
+        string label,
+        int row,
+        int column,
+        bool includeProgress,
+        out WpfProgressBar? progress,
+        out TextBlock lastKnown)
+    {
+        progress = null;
+        var card = new Border
+        {
+            Style = (Style)WpfApplication.Current.Resources["MetricCard"],
+            Margin = new Thickness(column == 0 ? 0 : 5, 0, column == 0 ? 5 : 0, 7)
+        };
+        var stack = new StackPanel();
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 2) };
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var labelText = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMuted"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        header.Children.Add(labelText);
+        lastKnown = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMuted"],
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            MaxWidth = 150,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+        Grid.SetColumn(lastKnown, 1);
+        header.Children.Add(lastKnown);
+        stack.Children.Add(header);
+        var valueRows = new Grid { MinHeight = 34, Tag = label };
+        valueRows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
+        valueRows.ColumnDefinitions.Add(new ColumnDefinition());
+        SetMetricText(valueRows, "...");
+        stack.Children.Add(valueRows);
+        if (includeProgress)
+        {
+            progress = new WpfProgressBar
+            {
+                Height = 4,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
+                Visibility = Visibility.Collapsed,
+                Margin = new Thickness(0, 5, 0, 0)
+            };
+            stack.Children.Add(progress);
+        }
+        card.Child = stack;
+        Grid.SetRow(card, row);
+        Grid.SetColumn(card, column);
+        grid.Children.Add(card);
+        return valueRows;
+    }
+
+    public static void SetMetricText(Grid? target, string value, bool emphasizeLoadedStatus = false)
+    {
+        if (target is null) return;
+
+        target.Children.Clear();
+        target.RowDefinitions.Clear();
+        var lines = (string.IsNullOrWhiteSpace(value) ? "..." : value.TrimEnd())
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.None);
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            target.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            if (TryAddStatusNameMetricLine(target, lines[i], emphasizeLoadedStatus, i))
+                continue;
+
+            if (MetricShouldRenderNeutralStatus(target, lines[i]))
+            {
+                AddSpanningMetricBlock(target, MetricPlainValueBlock(lines[i].Trim(), compact: false), i);
+                continue;
+            }
+
+            if (MetricShouldEmphasizeWholeLine(target, lines[i], emphasizeLoadedStatus))
+            {
+                AddSpanningMetricBlock(target, MetricValueBlock(lines[i].Trim(), compact: false, emphasizeWholeLine: true), i);
+                continue;
+            }
+
+            var (label, metricValue) = SplitMetricLine(lines[i]);
+            if (!string.IsNullOrWhiteSpace(label))
+            {
+                var labelBlock = new TextBlock
+                {
+                    Text = label,
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMuted"],
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 8, 2)
+                };
+                Grid.SetRow(labelBlock, i);
+                Grid.SetColumn(labelBlock, 0);
+                target.Children.Add(labelBlock);
+
+                var valueBlock = MetricValueBlock(metricValue, compact: true);
+                Grid.SetRow(valueBlock, i);
+                Grid.SetColumn(valueBlock, 1);
+                target.Children.Add(valueBlock);
+            }
+            else
+            {
+                AddSpanningMetricBlock(target, MetricValueBlock(metricValue, compact: false), i);
+            }
+        }
+    }
+
+    public static void SetLastKnownMetricText(TextBlock? target, DateTimeOffset capturedAt, DateTimeOffset now)
+    {
+        if (target is null) return;
+
+        var age = now <= capturedAt ? "just now" : DisplayFormatService.Elapsed(now - capturedAt);
+        target.Text = $"Last known {age} ago";
+        target.ToolTip = "Live token rates are using the most recent successful metrics sample.";
+        target.Visibility = Visibility.Visible;
+    }
+
+    public static void ClearLastKnownMetricText(TextBlock? target)
+    {
+        if (target is null) return;
+
+        target.Text = "";
+        target.ToolTip = null;
+        target.Visibility = Visibility.Collapsed;
+    }
+
+    public static (string Label, string Value) SplitMetricLine(string line)
+    {
+        var text = line.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return ("", "");
+
+        var colon = text.IndexOf(':');
+        if (colon > 0 && colon < 16)
+            return (text[..colon].Trim(), text[(colon + 1)..].Trim());
+
+        foreach (var label in new[] { "KV cache", "Context", "Prompt", "Gen" })
+        {
+            if (text.StartsWith(label + " ", StringComparison.Ordinal))
+                return (label, text[label.Length..].Trim());
+        }
+
+        return ("", text);
+    }
+
+    public static bool IsNeutralMetricStatus(string text)
+    {
+        var normalized = text.Trim();
+        return string.Equals(normalized, "None", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Stopped", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Loading", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Loaded", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Warm", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Unavailable", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Unknown runtime", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "Unknown model", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "No runtime", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(normalized, "No loaded runtime", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("Failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MetricShouldRenderNeutralStatus(Grid target, string line)
+    {
+        if (target.Tag is not string label || !IsStatusNameMetricLabel(label)) return false;
+        var text = line.Trim();
+        return !string.IsNullOrWhiteSpace(text) && IsNeutralMetricStatus(text);
+    }
+
+    private static bool TryAddStatusNameMetricLine(Grid target, string line, bool emphasizeLoadedStatus, int row)
+    {
+        if (target.Tag is not string label) return false;
+        var text = line.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!IsStatusNameMetricLabel(label)) return false;
+
+        if (IsNeutralMetricStatus(text))
+        {
+            AddSpanningMetricBlock(target, MetricPlainValueBlock(text, compact: false), row);
+            return true;
+        }
+
+        if (string.Equals(label, "Model status", StringComparison.Ordinal)
+            && TrySplitModelStatusName(text, out var statusPrefix, out var modelName))
+        {
+            AddSpanningMetricBlock(target, MetricStatusNameBlock(statusPrefix, modelName), row);
+            return true;
+        }
+
+        if (string.Equals(label, "Model status", StringComparison.Ordinal))
+        {
+            AddSpanningMetricBlock(target, MetricPlainValueBlock(text, compact: false), row);
+            return true;
+        }
+
+        if (string.Equals(label, "Runtime build", StringComparison.Ordinal))
+        {
+            var runtimeBlock = emphasizeLoadedStatus && !LooksLikeEndpoint(text)
+                ? MetricStatusNameBlock("", text)
+                : MetricPlainValueBlock(text, compact: false);
+            AddSpanningMetricBlock(target, runtimeBlock, row);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void AddSpanningMetricBlock(Grid target, UIElement block, int row)
+    {
+        Grid.SetRow(block, row);
+        Grid.SetColumn(block, 0);
+        Grid.SetColumnSpan(block, 2);
+        target.Children.Add(block);
+    }
+
+    private static bool LooksLikeEndpoint(string text)
+        => text.Contains("://", StringComparison.Ordinal)
+           || text.StartsWith("localhost:", StringComparison.OrdinalIgnoreCase)
+           || text.StartsWith("127.0.0.1:", StringComparison.OrdinalIgnoreCase)
+           || text.StartsWith("0.0.0.0:", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TrySplitModelStatusName(string text, out string statusPrefix, out string modelName)
+    {
+        statusPrefix = "";
+        modelName = "";
+
+        foreach (var prefix in new[] { "Loaded:", "Loading", "Warm:", "Stopped:" })
+        {
+            if (!text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            var separator = prefix.EndsWith(":", StringComparison.Ordinal) ? prefix.Length : prefix.Length;
+            var remainder = text[separator..].TrimStart();
+            if (string.IsNullOrWhiteSpace(remainder)) return false;
+
+            statusPrefix = prefix.EndsWith(":", StringComparison.Ordinal) ? $"{text[..separator]} " : $"{text[..separator]} ";
+            modelName = remainder;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsStatusNameMetricLabel(string label)
+        => string.Equals(label, "Model status", StringComparison.Ordinal)
+           || string.Equals(label, "Runtime build", StringComparison.Ordinal);
+
+    private static bool MetricShouldEmphasizeWholeLine(Grid target, string line, bool emphasizeLoadedStatus)
+    {
+        if (target.Tag is not string label) return false;
+        var text = line.Trim();
+        if (string.IsNullOrWhiteSpace(text) || IsNeutralMetricStatus(text)) return false;
+
+        if (string.Equals(label, "Model status", StringComparison.Ordinal))
+            return false;
+
+        if (string.Equals(label, "Runtime build", StringComparison.Ordinal))
+            return emphasizeLoadedStatus;
+
+        return false;
+    }
+
+    private static TextBlock MetricPlainValueBlock(string text, bool compact)
+    {
+        var block = new TextBlock
+        {
+            FontSize = compact ? 13 : 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMain"],
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = compact ? 16 : 17,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        block.Inlines.Add(new Run(string.IsNullOrWhiteSpace(text) ? "..." : text));
+        return block;
+    }
+
+    private static TextBlock MetricStatusNameBlock(string statusPrefix, string emphasizedName)
+    {
+        var block = new TextBlock
+        {
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMain"],
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 17,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        if (!string.IsNullOrWhiteSpace(statusPrefix))
+        {
+            block.Inlines.Add(new Run(statusPrefix)
+            {
+                Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMuted"]
+            });
+        }
+
+        block.Inlines.Add(new Run(emphasizedName)
+        {
+            FontWeight = FontWeights.Bold,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["AccentStrong"]
+        });
+        return block;
+    }
+
+    private static TextBlock MetricValueBlock(string text, bool compact, bool emphasizeWholeLine = false)
+    {
+        var block = new TextBlock
+        {
+            FontSize = compact ? 13 : 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMain"],
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = compact ? 16 : 17,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        AddMetricValueInlines(block, text, emphasizeWholeLine);
+        return block;
+    }
+
+    private static void AddMetricValueInlines(TextBlock block, string text, bool emphasizeWholeLine = false)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            block.Inlines.Add(new Run("..."));
+            return;
+        }
+
+        if (emphasizeWholeLine)
+        {
+            block.Inlines.Add(new Run(text)
+            {
+                FontWeight = FontWeights.Bold,
+                Foreground = (WpfBrush)WpfApplication.Current.Resources["AccentStrong"]
+            });
+            return;
+        }
+
+        var index = 0;
+        foreach (Match match in MetricImportantValuePattern.Matches(text))
+        {
+            if (match.Index > index)
+                block.Inlines.Add(new Run(text[index..match.Index])
+                {
+                    Foreground = (WpfBrush)WpfApplication.Current.Resources["TextMuted"]
+                });
+
+            var valueRun = new Run(match.Value)
+            {
+                FontFamily = MetricValueFont,
+                FontWeight = FontWeights.Bold,
+                Foreground = (WpfBrush)WpfApplication.Current.Resources["AccentStrong"]
+            };
+            Typography.SetNumeralAlignment(valueRun, FontNumeralAlignment.Tabular);
+            block.Inlines.Add(valueRun);
+            index = match.Index + match.Length;
+        }
+
+        if (index < text.Length)
+        {
+            block.Inlines.Add(new Run(text[index..])
+            {
+                Foreground = index == 0
+                    ? (WpfBrush)WpfApplication.Current.Resources["TextMain"]
+                    : (WpfBrush)WpfApplication.Current.Resources["TextMuted"]
+            });
+        }
+    }
+}

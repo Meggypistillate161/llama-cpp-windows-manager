@@ -1,0 +1,175 @@
+namespace LocalLlmConsole.Services;
+
+public enum RuntimeDashboardRefreshApplicationOutcome
+{
+    Skipped,
+    RenderedStoppedSelection,
+    Applied
+}
+
+public sealed record RuntimeDashboardRefreshApplicationRequest(
+    RuntimeDashboardRefreshTarget RefreshTarget,
+    bool RenderOverview,
+    AppSettings Settings,
+    string ActiveModelId,
+    string ActiveRuntimeId,
+    LlamaRuntimeState RuntimeState,
+    bool RuntimeIsRunning);
+
+public sealed record RuntimeDashboardRefreshApplicationActions(
+    Func<Task> MarkLoadedSessionsIfReadyAsync,
+    Action RefreshOverviewSessionRows,
+    Func<IReadOnlyList<LoadedModelSessionSnapshot>> SessionSnapshots,
+    Func<IReadOnlyList<RuntimeMetricPollResult>, Task> TrackLifetimeTokenDeltasAsync,
+    Func<IReadOnlyList<RuntimeMetricPollResult>, Task> ApplyIdleUnloadPoliciesAsync,
+    Func<ModelRecord?> SelectedOverviewModel,
+    Func<ModelRecord, bool> IsModelActive,
+    Func<ModelRecord, bool> IsModelLoaded,
+    Func<string, LoadedModelSessionSnapshot?> SessionForModel,
+    Func<LoadedModelSessionSnapshot?> SelectedSession,
+    Func<AppSettings?> ActiveSessionSettings,
+    Func<AppSettings?> ActiveRuntimeSettings,
+    Func<string, RuntimeSessionSelectResult> SelectModel,
+    Action<AppSettings?> SetActiveRuntimeSettings,
+    Func<Task<(string Model, string Runtime)>> ActiveRuntimeLabelsAsync,
+    Action<string> RefreshModelStatusMetric,
+    Action<string, bool> SetRuntimeMetric,
+    Func<Task> SaveActiveRuntimeSessionsAsync,
+    Action UpdateRuntimeModelProgress,
+    Func<Task<string>> CachedGpuSummaryAsync,
+    Action<string> SetGpuMetric,
+    Func<ModelRecord?, bool, Task> RenderStoppedSelectedOverviewModelAsync,
+    RuntimeDashboardMetricsApplicationActions MetricsActions,
+    Action UpdateOverviewModelActions);
+
+public sealed class RuntimeDashboardRefreshApplicationService
+{
+    private readonly RuntimeTelemetryApplicationService _telemetry;
+    private readonly RuntimeDashboardSelectionService _selection;
+    private readonly RuntimeDashboardMetricsApplicationService _metricsApplication;
+
+    public RuntimeDashboardRefreshApplicationService(
+        RuntimeTelemetryApplicationService telemetry,
+        RuntimeDashboardSelectionService selection,
+        RuntimeDashboardMetricsApplicationService metricsApplication)
+    {
+        _telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
+        _selection = selection ?? throw new ArgumentNullException(nameof(selection));
+        _metricsApplication = metricsApplication ?? throw new ArgumentNullException(nameof(metricsApplication));
+    }
+
+    public async Task<RuntimeDashboardRefreshApplicationOutcome> RefreshAsync(
+        RuntimeDashboardRefreshApplicationRequest request,
+        RuntimeDashboardRefreshApplicationActions actions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.RefreshTarget);
+        ArgumentNullException.ThrowIfNull(request.Settings);
+        Validate(actions);
+
+        using var refreshScope = _telemetry.TryBeginRefresh(request.RefreshTarget);
+        if (refreshScope is null)
+            return RuntimeDashboardRefreshApplicationOutcome.Skipped;
+
+        try
+        {
+            await actions.MarkLoadedSessionsIfReadyAsync();
+            if (request.RenderOverview)
+                actions.RefreshOverviewSessionRows();
+
+            var pollResults = await _telemetry.PollSessionsAsync(actions.SessionSnapshots(), cancellationToken);
+            await actions.TrackLifetimeTokenDeltasAsync(pollResults);
+            await actions.ApplyIdleUnloadPoliciesAsync(pollResults);
+
+            var selectedOverviewModel = actions.SelectedOverviewModel();
+            var selectedOverviewModelSession = selectedOverviewModel is null
+                ? null
+                : actions.SessionForModel(selectedOverviewModel.Id);
+            var selection = _selection.Select(new RuntimeDashboardSelectionRequest(
+                selectedOverviewModel,
+                selectedOverviewModel is not null && actions.IsModelActive(selectedOverviewModel),
+                selectedOverviewModel is not null && actions.IsModelLoaded(selectedOverviewModel),
+                selectedOverviewModelSession,
+                actions.SelectedSession(),
+                actions.ActiveSessionSettings(),
+                actions.ActiveRuntimeSettings(),
+                request.Settings,
+                request.ActiveModelId,
+                request.ActiveRuntimeId));
+            if (selection.SelectedOverviewModelHasNoRunningSession)
+            {
+                await actions.RenderStoppedSelectedOverviewModelAsync(selectedOverviewModel, request.RenderOverview);
+                return RuntimeDashboardRefreshApplicationOutcome.RenderedStoppedSelection;
+            }
+
+            if (selection.SelectSelectedOverviewModel)
+                actions.SetActiveRuntimeSettings(actions.SelectModel(selectedOverviewModel!.Id).ActiveSettings);
+
+            var selectedSession = selection.Session;
+            var runtimeKey = selection.RuntimeKey;
+            var selectedPollResult = selectedSession is null
+                ? null
+                : pollResults.FirstOrDefault(result => string.Equals(result.RuntimeKey, runtimeKey, StringComparison.Ordinal));
+
+            var (modelName, runtimeName) = await actions.ActiveRuntimeLabelsAsync();
+            if (request.RenderOverview)
+            {
+                actions.RefreshModelStatusMetric(modelName);
+                actions.SetRuntimeMetric(runtimeName, request.RuntimeIsRunning);
+            }
+
+            if (request.RuntimeState == LlamaRuntimeState.Failed)
+                await actions.SaveActiveRuntimeSessionsAsync();
+
+            if (request.RenderOverview)
+            {
+                actions.UpdateRuntimeModelProgress();
+                actions.SetGpuMetric(await actions.CachedGpuSummaryAsync());
+            }
+
+            _metricsApplication.Apply(
+                new RuntimeDashboardMetricsApplicationRequest(
+                    request.RenderOverview,
+                    selectedSession,
+                    selection.MetricsSettings,
+                    selectedPollResult,
+                    runtimeKey),
+                actions.MetricsActions);
+            return RuntimeDashboardRefreshApplicationOutcome.Applied;
+        }
+        finally
+        {
+            actions.UpdateOverviewModelActions();
+        }
+    }
+
+    private static void Validate(RuntimeDashboardRefreshApplicationActions actions)
+    {
+        ArgumentNullException.ThrowIfNull(actions);
+        ArgumentNullException.ThrowIfNull(actions.MarkLoadedSessionsIfReadyAsync);
+        ArgumentNullException.ThrowIfNull(actions.RefreshOverviewSessionRows);
+        ArgumentNullException.ThrowIfNull(actions.SessionSnapshots);
+        ArgumentNullException.ThrowIfNull(actions.TrackLifetimeTokenDeltasAsync);
+        ArgumentNullException.ThrowIfNull(actions.ApplyIdleUnloadPoliciesAsync);
+        ArgumentNullException.ThrowIfNull(actions.SelectedOverviewModel);
+        ArgumentNullException.ThrowIfNull(actions.IsModelActive);
+        ArgumentNullException.ThrowIfNull(actions.IsModelLoaded);
+        ArgumentNullException.ThrowIfNull(actions.SessionForModel);
+        ArgumentNullException.ThrowIfNull(actions.SelectedSession);
+        ArgumentNullException.ThrowIfNull(actions.ActiveSessionSettings);
+        ArgumentNullException.ThrowIfNull(actions.ActiveRuntimeSettings);
+        ArgumentNullException.ThrowIfNull(actions.SelectModel);
+        ArgumentNullException.ThrowIfNull(actions.SetActiveRuntimeSettings);
+        ArgumentNullException.ThrowIfNull(actions.ActiveRuntimeLabelsAsync);
+        ArgumentNullException.ThrowIfNull(actions.RefreshModelStatusMetric);
+        ArgumentNullException.ThrowIfNull(actions.SetRuntimeMetric);
+        ArgumentNullException.ThrowIfNull(actions.SaveActiveRuntimeSessionsAsync);
+        ArgumentNullException.ThrowIfNull(actions.UpdateRuntimeModelProgress);
+        ArgumentNullException.ThrowIfNull(actions.CachedGpuSummaryAsync);
+        ArgumentNullException.ThrowIfNull(actions.SetGpuMetric);
+        ArgumentNullException.ThrowIfNull(actions.RenderStoppedSelectedOverviewModelAsync);
+        ArgumentNullException.ThrowIfNull(actions.MetricsActions);
+        ArgumentNullException.ThrowIfNull(actions.UpdateOverviewModelActions);
+    }
+}

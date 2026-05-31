@@ -1,0 +1,46 @@
+using System.Windows.Controls;
+using System.Windows.Input;
+
+namespace LocalLlmConsole;
+
+public sealed record RuntimesPageActionControllerActions(
+    Func<Task> ChooseRuntimeFolderAsync,
+    Func<Task> ChangeCudaPackagePreferenceAsync,
+    Action ToggleAdvancedRuntimes,
+    MouseButtonEventHandler RuntimeGridPreviewMouseLeftButtonDown,
+    RuntimesPageRowActionController RowActions,
+    Action<DataGrid> ConfigureRuntimeGridColumnSizing,
+    Action<DataGrid> ConfigureRuntimeBuildGridColumnSizing,
+    Action<DataGrid> ConfigureRuntimeJobsGridColumnSizing);
+
+public sealed class RuntimesPageActionController
+{
+    private readonly RuntimesPageActionControllerActions _actions;
+
+    public RuntimesPageActionController(RuntimesPageActionControllerActions actions)
+    {
+        _actions = actions;
+    }
+
+    public RuntimesPageActions Build()
+        => new(
+            _actions.ChooseRuntimeFolderAsync,
+            _actions.ChangeCudaPackagePreferenceAsync,
+            _actions.ToggleAdvancedRuntimes,
+            _actions.RuntimeGridPreviewMouseLeftButtonDown,
+            _actions.RowActions.BuildRuntimeRow_Click,
+            _actions.RowActions.DeleteRuntimeRow_Click,
+            _actions.RowActions.InstallRuntimePackageRow_Click,
+            _actions.RowActions.CheckRuntimePackageUpdateRow_Click,
+            _actions.RowActions.DeleteRuntimePackageRow_Click,
+            _actions.RowActions.DownloadRuntimePresetRow_Click,
+            _actions.RowActions.CheckRuntimePresetUpdateRow_Click,
+            _actions.RowActions.DeleteRuntimePresetRow_Click,
+            _actions.RowActions.OpenRuntimeJobLogRow_Click,
+            _actions.RowActions.CancelRuntimeJobRow_Click,
+            _actions.RowActions.RetryRuntimeJobRow_Click,
+            _actions.RowActions.ClearRuntimeJobRow_Click,
+            _actions.ConfigureRuntimeGridColumnSizing,
+            _actions.ConfigureRuntimeBuildGridColumnSizing,
+            _actions.ConfigureRuntimeJobsGridColumnSizing);
+}
