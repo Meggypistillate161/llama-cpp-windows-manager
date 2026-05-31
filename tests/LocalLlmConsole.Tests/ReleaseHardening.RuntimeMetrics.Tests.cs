@@ -328,7 +328,7 @@ public sealed partial class ReleaseHardeningTests
 
         var nvidiaRunner = new ScriptedProcessRunner(_ => new ProcessRunResult(0, "0, NVIDIA RTX, 76, 62, 12288, 24576", ""));
         var nvidiaService = new RuntimeGpuSummaryApplicationService(
-            new GpuStatusProbeService(nvidiaRunner, () => ""),
+            new GpuStatusProbeService(nvidiaRunner, () => "", () => "nvidia-smi.exe"),
             new GpuSummaryCache(),
             () => "wsl.exe");
 

@@ -59,7 +59,7 @@ public sealed partial class ReleaseHardeningTests
                 return new ProcessRunResult(0, "0, NVIDIA RTX, 76, 62, 12288, 24576", "");
             return new ProcessRunResult(0, "[level_zero:gpu][level_zero:0] Intel(R) Arc(TM) A770 Graphics", "");
         });
-        var service = new GpuStatusProbeService(runner, () => "sycl-ls.exe");
+        var service = new GpuStatusProbeService(runner, () => "sycl-ls.exe", () => "nvidia-smi.exe");
 
         var memory = await service.MemoryAsync(TestContext.Current.CancellationToken);
         var summary = await service.SummaryAsync(TestContext.Current.CancellationToken);

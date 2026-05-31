@@ -4,13 +4,16 @@ public sealed class GpuStatusProbeService
 {
     private readonly IProcessRunner _processRunner;
     private readonly Func<string> _findWindowsSyclLs;
+    private readonly Func<string> _findNvidiaSmi;
 
     public GpuStatusProbeService(
         IProcessRunner processRunner,
-        Func<string>? findWindowsSyclLs = null)
+        Func<string>? findWindowsSyclLs = null,
+        Func<string>? findNvidiaSmi = null)
     {
         _processRunner = processRunner ?? throw new ArgumentNullException(nameof(processRunner));
         _findWindowsSyclLs = findWindowsSyclLs ?? FindWindowsSyclLs;
+        _findNvidiaSmi = findNvidiaSmi ?? HostExecutableResolver.NvidiaSmiExe;
     }
 
     public async Task<VramMemorySnapshot?> MemoryAsync(CancellationToken cancellationToken = default)
@@ -112,9 +115,9 @@ public sealed class GpuStatusProbeService
         return result.ExitCode == 0 ? result.Output : "";
     }
 
-    private static ProcessStartInfo NvidiaSmiStartInfo(params string[] args)
+    private ProcessStartInfo NvidiaSmiStartInfo(params string[] args)
     {
-        var psi = new ProcessStartInfo(HostExecutableResolver.NvidiaSmiExe());
+        var psi = new ProcessStartInfo(_findNvidiaSmi());
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         return psi;
