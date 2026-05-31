@@ -76,11 +76,16 @@ public sealed partial class ReleaseHardeningTests
                 if (Directory.Exists(moduleRoot))
                 {
                     var fileName = segments[^1];
-                    var movedCandidate = Directory
+                    var movedCandidates = Directory
                         .EnumerateFiles(moduleRoot, fileName, SearchOption.AllDirectories)
                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                        .FirstOrDefault();
-                    if (movedCandidate is not null) return movedCandidate;
+                        .ToArray();
+                    if (movedCandidates.Length > 1)
+                    {
+                        throw new InvalidOperationException(
+                            $"Repository file lookup is ambiguous for {fileName}: {string.Join(", ", movedCandidates)}");
+                    }
+                    if (movedCandidates.Length == 1) return movedCandidates[0];
                 }
             }
             directory = directory.Parent;

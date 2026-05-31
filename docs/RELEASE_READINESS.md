@@ -153,7 +153,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1
 ```
 
 Result: Release app build succeeded with zero warnings, release-hardening tests
-passed (`421/421`), formatting was clean, no vulnerable packages were found,
+passed (`422/422`), formatting was clean, no vulnerable packages were found,
 the diff had no whitespace errors, and publish/installer artifact checks passed
 locally. The next release notes draft is tracked in
 `docs/GITHUB_RELEASE_NEXT.md`.

@@ -249,6 +249,8 @@ files.
   records without flat pass-through aliases.
 - Keep representative feature services in their owning service module instead
   of relying on filename search to hide accidental moves.
+- Keep service and UI implementation filenames unique across modules so tests,
+  reviews, and future moves cannot become ambiguous by filename alone.
 - Merge pass-through `ApplicationService`/`WorkflowService` pairs when a wrapper
   does not own a real UI adaptation, decision, state, or boundary.
 - Prefer behavior tests and module-boundary guard tests over brittle tests that

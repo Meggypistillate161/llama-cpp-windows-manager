@@ -159,6 +159,27 @@ public sealed partial class ReleaseHardeningTests
     }
 
     [Fact]
+    public void ServiceAndUiModuleFileNamesStayUnambiguous()
+    {
+        var mainWindowPath = FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.xaml.cs");
+        var appRoot = Path.GetDirectoryName(mainWindowPath)!;
+        var checkedRoots = new[]
+        {
+            Path.Combine(appRoot, "Services"),
+            Path.Combine(appRoot, "Ui")
+        };
+
+        var duplicates = checkedRoots
+            .SelectMany(root => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+            .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{group.Key}: {string.Join(", ", group.Select(path => Path.GetRelativePath(appRoot, path)).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))}")
+            .ToArray();
+
+        Assert.Empty(duplicates);
+    }
+
+    [Fact]
     public void LaunchSettingsPanelFactoryStaysSplitByPanelResponsibility()
     {
         var mainWindowPath = FindRepositoryFile("src", "LocalLlmConsole.App", "MainWindow.xaml.cs");

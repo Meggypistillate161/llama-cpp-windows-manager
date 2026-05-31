@@ -134,7 +134,7 @@ Verification for this hardening pass:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test-release-gate.ps1 -IncludePublish -IncludeInstaller
 ```
 
-Result on 2026-05-31: release-hardening tests passed (`421/421`), formatting was
+Result on 2026-05-31: release-hardening tests passed (`422/422`), formatting was
 clean, the Release build succeeded with zero warnings, no vulnerable packages
 were found, the diff had no whitespace errors, and publish/installer artifact
 checks passed locally.
